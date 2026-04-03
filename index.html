@@ -1261,6 +1261,7 @@ let _initialSessionFired = false;
 supa.auth.onAuthStateChange(async(event,session)=>{
   console.log('[AUTH]', event, session?.user?.email||'no user');
   if(event==='INITIAL_SESSION') _initialSessionFired = true;
+  if(event==='SIGNED_IN') _syncEnabled = false; // reset on every sign in to force reload
   if(session?.user){
     currentUser=session.user;
     try{currentProfile=await loadProfile(session.user);}catch(e){currentProfile=null;}
