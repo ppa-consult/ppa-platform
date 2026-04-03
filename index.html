@@ -1089,10 +1089,7 @@ async function saveProjectToSupabase(id){
 async function loadFromSupabase(){
   setSyncStatus('saving'); // show loading state
   try {
-    // Ensure session is active before querying
-    const {data:{session}} = await supa.auth.getSession();
-    if(!session) { setSyncStatus('idle'); return false; }
-    
+
     const timeout = new Promise((_,r) => setTimeout(() => r(new Error('DB timeout after 20s')), 20000));
     const queries = Promise.all([
       supa.from('projects').select('*'),
@@ -1261,23 +1258,21 @@ let _initialSessionFired = false;
 supa.auth.onAuthStateChange(async(event,session)=>{
   console.log('[AUTH]', event, session?.user?.email||'no user');
   if(event==='INITIAL_SESSION') _initialSessionFired = true;
-  _syncEnabled = false; // always reset so data reloads on every auth event
-  if(session?.user){
-    currentUser=session.user;
-    try{currentProfile=await loadProfile(session.user);}catch(e){currentProfile=null;}
-    updateUserBadge(currentProfile,session.user);
+
+  const user = session?.user;
+  if(user){
+    currentUser = user;
+    try{currentProfile=await loadProfile(user);}catch(e){currentProfile=null;}
+    updateUserBadge(currentProfile,user);
     document.getElementById('auth-screen').style.display='none';
-    if(!_syncEnabled){
-      console.log('[AUTH] calling loadFromSupabase...');
-      await new Promise(r => setTimeout(r, 2000)); // wait for client to fully re-establish session after refresh
-      try{
-        const loaded=await loadFromSupabase();
-        console.log('[AUTH] loadFromSupabase done, loaded=', loaded);
-        if(!loaded){initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;}
-      }catch(e){
-        console.error('[AUTH] Load error:',e);
-        initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;
-      }
+    console.log('[AUTH] calling loadFromSupabase...');
+    try{
+      const loaded=await loadFromSupabase();
+      console.log('[AUTH] loadFromSupabase done, loaded=', loaded);
+      if(!loaded){initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;}
+    }catch(e){
+      console.error('[AUTH] Load error:',e);
+      initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;
     }
     setTimeout(bindKpiTips,300);
   } else {
