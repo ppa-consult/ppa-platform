@@ -1248,6 +1248,7 @@ async function showUserMenu(){
 }
 
 async function signOut(){
+  stopRealtime();
   await supa.auth.signOut();
   try{const keys=Object.keys(localStorage).filter(k=>k.startsWith('sb-'));keys.forEach(k=>localStorage.removeItem(k));}catch(e){}
   currentUser=null; currentProfile=null;
@@ -1274,6 +1275,7 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     try{
       const loaded=await loadFromSupabase();
       if(!loaded){initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;}
+      startRealtime();
     }catch(e){
       console.error('[AUTH] Load error:',e);
       initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;
@@ -1286,6 +1288,66 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     _syncEnabled=false;
   }
 });
+
+// ══ REALTIME SYNC ═════════════════════════════════════════
+let _realtimeChannel = null;
+
+function startRealtime(){
+  if(_realtimeChannel) return; // already subscribed
+  _realtimeChannel = supa.channel('db-changes')
+    .on('postgres_changes', {event:'*', schema:'public', table:'projects'}, payload => {
+      handleRealtimeChange('projects', payload);
+    })
+    .on('postgres_changes', {event:'*', schema:'public', table:'pipeline'}, payload => {
+      handleRealtimeChange('pipeline', payload);
+    })
+    .on('postgres_changes', {event:'*', schema:'public', table:'project_state'}, payload => {
+      handleRealtimeChange('project_state', payload);
+    })
+    .subscribe(status => {
+      console.log('Realtime:', status);
+      if(status === 'SUBSCRIBED') setSyncStatus('idle');
+    });
+}
+
+function stopRealtime(){
+  if(_realtimeChannel){
+    supa.removeChannel(_realtimeChannel);
+    _realtimeChannel = null;
+  }
+}
+
+function handleRealtimeChange(table, payload){
+  const {eventType, new: newRow, old: oldRow} = payload;
+  const id = (newRow?.id || oldRow?.id);
+  if(!id) return;
+
+  // Ignore changes we made ourselves (already in memory)
+  if(eventType === 'DELETE'){
+    delete PROJECTS[id]; delete PIPE[id]; delete PER_PROJ[id];
+    const card = document.getElementById('card-'+id);
+    if(card) card.remove();
+    updateKPIs(); updateListBadges();
+    return;
+  }
+
+  if(table === 'projects' && newRow){
+    PROJECTS[id] = rowToProject(newRow);
+  } else if(table === 'pipeline' && newRow){
+    PIPE[id] = rowToPipe(newRow);
+  } else if(table === 'project_state' && newRow){
+    PER_PROJ[id] = rowToState(newRow);
+  }
+
+  // Re-render the card
+  try{
+    const existing = document.getElementById('card-'+id);
+    if(existing) existing.remove();
+    if(PROJECTS[id]) placeCard(id);
+    updateKPIs();
+    try{updateListBadges();}catch(e){}
+  }catch(e){ console.error('Realtime render error:', e); }
+}
 
 </script>
 <script>
