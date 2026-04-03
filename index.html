@@ -1089,6 +1089,10 @@ async function saveProjectToSupabase(id){
 async function loadFromSupabase(){
   setSyncStatus('saving'); // show loading state
   try {
+    // Ensure session is active before querying
+    const {data:{session}} = await supa.auth.getSession();
+    if(!session) { setSyncStatus('idle'); return false; }
+    
     const timeout = new Promise((_,r) => setTimeout(() => r(new Error('DB timeout after 20s')), 20000));
     const queries = Promise.all([
       supa.from('projects').select('*'),
