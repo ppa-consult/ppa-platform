@@ -1263,7 +1263,6 @@ async function signOut(){
 
 let _initialSessionFired = false;
 supa.auth.onAuthStateChange(async(event,session)=>{
-  console.log('[AUTH]', event, session?.user?.email||'no user');
   if(event==='INITIAL_SESSION') _initialSessionFired = true;
 
   const user = session?.user;
@@ -1272,10 +1271,8 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     try{currentProfile=await loadProfile(user);}catch(e){currentProfile=null;}
     updateUserBadge(currentProfile,user);
     document.getElementById('auth-screen').style.display='none';
-    console.log('[AUTH] calling loadFromSupabase...');
     try{
       const loaded=await loadFromSupabase();
-      console.log('[AUTH] loadFromSupabase done, loaded=', loaded);
       if(!loaded){initSampleData();initMondayData();updateKPIs();try{updateListBadges();}catch(e){}_syncEnabled=true;}
     }catch(e){
       console.error('[AUTH] Load error:',e);
@@ -1284,7 +1281,6 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     setTimeout(bindKpiTips,300);
   } else {
     if(_initialSessionFired){
-      console.log('[AUTH] signed out — showing auth screen');
       document.getElementById('auth-screen').style.display='flex';
     }
     _syncEnabled=false;
@@ -2911,6 +2907,7 @@ function initMondayData(){
 
 function renderSalesDashboard(){
   const el=document.getElementById('dash-content');if(!el)return;
+  window._dashTips = {}; // initialise before any writes
   const ids=Object.keys(PROJECTS);
   const ME_TARGET=10000000,EU_TARGET=8000000;
 
