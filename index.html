@@ -1029,6 +1029,7 @@ function rowToProject(row){
     feecur:row.feecur||'GBP',
     notes:row.notes||'', brief:row.brief||'',
     monday_stage:row.monday_stage||'',
+    createdAt:row.created_at||null,
   };
 }
 
@@ -1065,6 +1066,40 @@ function rowToState(row){
     milestones:  row.milestones||[],
     stageData:   row.stage_data||{},
   };
+}
+
+// ══ STAGE HISTORY ════════════════════════════════════════════
+let STAGE_HISTORY = {}; // project_id → array of {stage, entered_at, user_email}
+
+async function logStageChange(id, stage){
+  if(!currentUser||!id||!stage) return;
+  const entry = {stage, entered_at: new Date().toISOString(), user_email: currentUser.email};
+  if(!STAGE_HISTORY[id]) STAGE_HISTORY[id] = [];
+  STAGE_HISTORY[id].push(entry);
+  // Write to DB async (don't block the UI)
+  try{
+    await supa.from('stage_history').insert({
+      project_id: id,
+      stage,
+      entered_at: entry.entered_at,
+      user_email: currentUser.email,
+    });
+  }catch(e){ console.warn('Stage history write failed:', e.message); }
+}
+
+function getStageEntryDate(id, stage){
+  const history = STAGE_HISTORY[id]||[];
+  const entry = history.find(h => h.stage === stage);
+  return entry ? new Date(entry.entered_at) : null;
+}
+
+function getFirstEntryDate(id){
+  const history = STAGE_HISTORY[id]||[];
+  if(!history.length) {
+    const p = PROJECTS[id];
+    return p?.createdAt ? new Date(p.createdAt) : null;
+  }
+  return new Date(Math.min(...history.map(h => new Date(h.entered_at))));
 }
 
 // ══ SAVE (debounced) ═══════════════════════════════════════════
@@ -1104,9 +1139,17 @@ async function loadFromSupabase(){
       supa.from('projects').select('*'),
       supa.from('pipeline').select('*'),
       supa.from('project_state').select('*'),
+      supa.from('stage_history').select('project_id,stage,entered_at,user_email').order('entered_at',{ascending:true}),
     ]);
-    const [{data:proj,error:e1}, {data:pipe,error:e2}, {data:state,error:e3}] = await Promise.race([queries, timeout]);
+    const [{data:proj,error:e1},{data:pipe,error:e2},{data:state,error:e3},{data:hist,error:e4}] = await Promise.race([queries, timeout]);
     if(e1||e2||e3) throw new Error((e1||e2||e3).message);
+    // Load stage history into memory
+    if(hist&&!e4){
+      hist.forEach(h=>{
+        if(!STAGE_HISTORY[h.project_id]) STAGE_HISTORY[h.project_id]=[];
+        STAGE_HISTORY[h.project_id].push({stage:h.stage,entered_at:h.entered_at,user_email:h.user_email});
+      });
+    }
 
     if(!proj.length) {
       // No data in DB yet — push current in-memory data up
@@ -2999,318 +3042,506 @@ function renderSalesDashboard(){
   const el=document.getElementById('dash-content');if(!el)return;
   window._dashTips={};
 
-  // ── LM CONFIG ──────────────────────────────────────────────
-  const LM_CONFIG={
-    'T. Ryan':  {full:'Tom Ryan',   cur:'AED', target:15000000/3.67}, // AED→GBP
-    'A. Tizard':{full:'Arthur Tizard',cur:'GBP',target:8000000},
-    'D. Watts': {full:'Derek Watts', cur:'GBP', target:6000000},
-    'J. Phillips':{full:'Jon Phillips',cur:'GBP',target:10000000},
-    'B. Whitfield':{full:'Ben Whitfield',cur:'GBP',target:3000000},
-    'J. Fox':   {full:'Jeff Fox',   cur:'AED', target:5000000/3.67},
-  };
+  // ── ROLE CHECK ─────────────────────────────────────────────
+  const isOwner = currentProfile?.role==='owner';
+  const myLmKey = (() => {
+    const name=(currentProfile?.name||'').toLowerCase();
+    if(name.includes('ryan'))    return 'T. Ryan';
+    if(name.includes('tizard'))  return 'A. Tizard';
+    if(name.includes('watts'))   return 'D. Watts';
+    if(name.includes('phillips'))return 'J. Phillips';
+    if(name.includes('whitfield'))return 'B. Whitfield';
+    if(name.includes('fox'))     return 'J. Fox';
+    return null;
+  })();
 
-  // ── DATE FILTER STATE ──────────────────────────────────────
+  // ── LM CONFIG ─────────────────────────────────────────────
+  const LM_CONFIG={
+    'T. Ryan':   {full:'Tom Ryan',      cur:'AED', fxKey:'AED'},
+    'A. Tizard': {full:'Arthur Tizard', cur:'GBP', fxKey:'GBP'},
+    'D. Watts':  {full:'Derek Watts',   cur:'GBP', fxKey:'GBP'},
+    'J. Phillips':{full:'Jon Phillips', cur:'GBP', fxKey:'GBP'},
+    'B. Whitfield':{full:'Ben Whitfield',cur:'GBP',fxKey:'GBP'},
+    'J. Fox':    {full:'Jeff Fox',      cur:'AED', fxKey:'AED'},
+  };
+  const DEFAULT_TARGETS_GBP={
+    'T. Ryan':4085,'A. Tizard':8000000,'D. Watts':6000000,
+    'J. Phillips':10000000,'B. Whitfield':3000000,'J. Fox':1362,
+  }; // AED targets stored as GBP equiv
+  if(!window._lmTargets) window._lmTargets={...DEFAULT_TARGETS_GBP};
+
+  // ── DATE FILTER ────────────────────────────────────────────
   if(!window._dashDateFilter) window._dashDateFilter='all';
   if(!window._dashDateFrom)   window._dashDateFrom=null;
   if(!window._dashDateTo)     window._dashDateTo=null;
 
-  // ── LM TARGETS (editable by Jon) ──────────────────────────
-  if(!window._lmTargets){
-    window._lmTargets={};
-    Object.keys(LM_CONFIG).forEach(k=>{ window._lmTargets[k]=LM_CONFIG[k].target; });
-  }
-
-  // ── DATE RANGE HELPERS ─────────────────────────────────────
-  function getDateRange(filter){
-    const now=new Date();
-    const y=now.getFullYear(),m=now.getMonth();
-    const qStart=new Date(y,Math.floor(m/3)*3,1);
-    switch(filter){
-      case'this_week':{ const d=new Date(now);d.setDate(d.getDate()-d.getDay());return[d,now]; }
-      case'this_month': return[new Date(y,m,1),now];
-      case'this_quarter': return[qStart,now];
-      case'this_year': return[new Date(y,0,1),now];
-      case'last_month': return[new Date(y,m-1,1),new Date(y,m,0)];
-      case'last_quarter':{ const qs=new Date(qStart);qs.setMonth(qs.getMonth()-3);const qe=new Date(qStart);qe.setDate(qe.getDate()-1);return[qs,qe]; }
-      case'last_year': return[new Date(y-1,0,1),new Date(y-1,11,31)];
-      case'custom': return[window._dashDateFrom,window._dashDateTo];
-      default: return[null,null]; // all time
+  function getDateRange(f){
+    const n=new Date(),y=n.getFullYear(),m=n.getMonth();
+    const qs=new Date(y,Math.floor(m/3)*3,1);
+    switch(f){
+      case'this_week':{ const d=new Date(n);d.setDate(d.getDate()-d.getDay());return[d,n]; }
+      case'this_month':  return[new Date(y,m,1),n];
+      case'this_quarter':return[qs,n];
+      case'this_year':   return[new Date(y,0,1),n];
+      case'last_month':  return[new Date(y,m-1,1),new Date(y,m,0)];
+      case'last_quarter':{const qs2=new Date(qs);qs2.setMonth(qs2.getMonth()-3);const qe=new Date(qs);qe.setDate(qe.getDate()-1);return[qs2,qe];}
+      case'last_year':   return[new Date(y-1,0,1),new Date(y-1,11,31)];
+      case'custom':      return[window._dashDateFrom,window._dashDateTo];
+      default:           return[null,null];
     }
   }
 
   function inRange(id){
-    if(window._dashDateFilter==='all')return true;
+    if(window._dashDateFilter==='all') return true;
     const [from,to]=getDateRange(window._dashDateFilter);
-    if(!from)return true;
-    const p=PROJECTS[id];
-    const d=new Date(p.created||p.createdAt||Date.now());
-    return d>=from&&d<=to;
+    if(!from) return true;
+    const entry=getFirstEntryDate(id);
+    if(!entry) return true; // no date = include in all
+    return entry>=from && entry<=to;
   }
 
-  // ── COMPUTE PER-LM STATS ───────────────────────────────────
+  function filterLabel(){
+    const f=window._dashDateFilter;
+    const labels={'all':'All time','this_week':'This week','this_month':'This month',
+      'this_quarter':'This quarter','this_year':'This year','last_month':'Last month',
+      'last_quarter':'Last quarter','last_year':'Last year','custom':'Custom range'};
+    if(f==='custom'&&window._dashDateFrom&&window._dashDateTo){
+      const fmt=d=>d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+      return fmt(window._dashDateFrom)+' – '+fmt(window._dashDateTo);
+    }
+    if(f!=='all'){
+      const [from,to]=getDateRange(f);
+      if(from&&to){
+        const fmt=d=>d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+        return labels[f]+': '+fmt(from)+' – '+fmt(to);
+      }
+    }
+    return labels[f]||f;
+  }
+
+  // ── COMPUTE STATS ─────────────────────────────────────────
   const lmStats={};
   Object.keys(LM_CONFIG).forEach(k=>{
-    lmStats[k]={leads:0,opps:0,proposals:0,live:0,closed:0,
-      weightedForecast:0,secured:0,totalFee:0,projects:[]};
+    lmStats[k]={leads:0,contacted:0,opps:0,proposals:0,negotiation:0,live:0,closed:0,
+      weightedForecast:0,secured:0,totalFeeGBP:0,ids:[]};
   });
 
-  const ids=Object.keys(PROJECTS).filter(inRange);
-  ids.forEach(id=>{
+  const allIds=Object.keys(PROJECTS).filter(inRange);
+  allIds.forEach(id=>{
     const p=PROJECTS[id];const pipe=getPipe(id);
     const lm=p.lmgr||'';
-    if(!lmStats[lm])return;
+    if(!lmStats[lm]) return;
     const s=lmStats[lm];
-    s.projects.push(id);
+    s.ids.push(id);
     const stage=pipe.stage||'New Lead';
     const prob=getStageProbability(stage);
     let feeGBP=0;
     try{feeGBP=getTotalProjectFeeGBP(id)||0;}catch(e){}
-    if(!feeGBP&&p.efee&&!isNaN(p.efee))feeGBP=parseFloat(p.efee)*(FX.GBP/FX[p.feecur||'GBP']);
-    s.totalFee+=feeGBP;
+    if(!feeGBP&&p.efee&&!isNaN(p.efee)) feeGBP=parseFloat(p.efee)*(FX.GBP/FX[p.feecur||'GBP']);
+    s.totalFeeGBP+=feeGBP;
     s.weightedForecast+=feeGBP*prob;
     if(stage==='Live'){s.live++;s.secured+=feeGBP;}
-    else if(stage==='Closed Lead'||stage==='Lost')s.closed++;
-    else if(['Proposal','Negotiation'].includes(stage))s.proposals++;
-    else if(['Qualified','In Assessment'].includes(stage))s.opps++;
+    else if(['Closed Lead','Lost'].includes(stage)) s.closed++;
+    else if(['Proposal'].includes(stage)) s.proposals++;
+    else if(stage==='Negotiation') s.negotiation++;
+    else if(['Qualified','In Assessment'].includes(stage)) s.opps++;
+    else if(stage==='Contacted'||stage==='Information Pending'||stage==='Att. to contact') s.contacted++;
     else s.leads++;
   });
 
-  // ── TOTALS ─────────────────────────────────────────────────
-  let totalWeighted=0,totalSecured=0,totalTarget=0,totalProjects=ids.length;
-  Object.keys(LM_CONFIG).forEach(k=>{
-    totalWeighted+=lmStats[k].weightedForecast;
-    totalSecured+=lmStats[k].secured;
-    totalTarget+=window._lmTargets[k]||0;
-  });
-
-  // ── FORMAT HELPERS ─────────────────────────────────────────
-  const isJon=currentProfile?.name==='Jon Phillips'||currentUser?.email?.includes('phillips');
-  function fmGBP(v,lmKey){
-    const cfg=LM_CONFIG[lmKey]||{cur:'GBP'};
-    const fx=FX[cfg.cur]||1;
-    const val=v*fx;
-    if(val>=1e6)return cfg.cur+' '+(val/1e6).toFixed(1)+'M';
-    if(val>=1e3)return cfg.cur+' '+Math.round(val/1e3)+'K';
+  // ── FORMAT HELPERS ────────────────────────────────────────
+  function fmLM(gbp,lmKey){
+    const cfg=LM_CONFIG[lmKey]||{cur:'GBP',fxKey:'GBP'};
+    const val=gbp*(FX[cfg.fxKey]||1);
+    if(val>=1e6) return cfg.cur+' '+(val/1e6).toFixed(1)+'M';
+    if(val>=1e3) return cfg.cur+' '+Math.round(val/1e3)+'K';
     return cfg.cur+' '+Math.round(val);
   }
-  function fmGlobal(v){
-    if(v>=1e6)return 'GBP '+(v/1e6).toFixed(2)+'M';
-    if(v>=1e3)return 'GBP '+Math.round(v/1e3)+'K';
+  function fmGBP(v){
+    if(v>=1e6) return 'GBP '+(v/1e6).toFixed(2)+'M';
+    if(v>=1e3) return 'GBP '+Math.round(v/1e3)+'K';
     return 'GBP '+Math.round(v);
   }
   function pct(a,b){return b>0?Math.min(100,Math.round(a/b*100)):0;}
 
-  // ── SVG DIAL ───────────────────────────────────────────────
+  // Team totals
+  const lmKeys=Object.keys(LM_CONFIG);
+  const totalWeighted=lmKeys.reduce((s,k)=>s+lmStats[k].weightedForecast,0);
+  const totalSecured=lmKeys.reduce((s,k)=>s+lmStats[k].secured,0);
+  const totalTarget=lmKeys.reduce((s,k)=>s+(window._lmTargets[k]||0),0);
+  const teamPct=pct(totalWeighted,totalTarget);
+  const teamColor=teamPct>=100?'var(--accent)':teamPct>=70?'var(--amber)':'var(--coral)';
+
+  // ── SVG DIAL ──────────────────────────────────────────────
   function dial(actual,target,color){
-    const r=36,cx=44,cy=44,stroke=7;
-    const circumference=Math.PI*r; // half circle
     const p=Math.min(1,target>0?actual/target:0);
-    const filled=p*circumference;
-    const angle=180*p;
-    // Convert to arc path
-    function polarToCartesian(cx,cy,r,angleDeg){
-      const a=(angleDeg-180)*Math.PI/180;
-      return{x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)};
-    }
-    const start=polarToCartesian(cx,cy,r,0);
-    const end=polarToCartesian(cx,cy,r,180*p);
-    const largeArc=p>0.5?1:0;
-    const pathFill=p>0?`M ${polarToCartesian(cx,cy,r,0).x} ${polarToCartesian(cx,cy,r,0).y} A ${r} ${r} 0 ${largeArc} 1 ${end.x} ${end.y}`:'';
-    return `<svg width="88" height="52" viewBox="0 0 88 52">
-      <path d="M 8 44 A 36 36 0 0 1 80 44" fill="none" stroke="var(--border2)" stroke-width="${stroke}" stroke-linecap="round"/>
-      ${p>0?`<path d="M 8 44 A 36 36 0 ${p>0.5?1:0} 1 ${polarToCartesian(cx,cy,r,180*p).x} ${polarToCartesian(cx,cy,r,180*p).y}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"/>`:''}
-      <text x="44" y="42" text-anchor="middle" font-size="11" font-weight="700" font-family="var(--fm)" fill="${color}">${Math.round(p*100)}%</text>
+    const r=34,cx=42,cy=42,sw=7;
+    function pt(deg){const a=(deg-180)*Math.PI/180;return{x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)};}
+    const s=pt(0),e=pt(180*p);
+    const arc=p>0?`<path d="M ${pt(0).x} ${pt(0).y} A ${r} ${r} 0 ${p>0.5?1:0} 1 ${e.x} ${e.y}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`:'';
+    return `<svg width="84" height="50" viewBox="0 0 84 50">
+      <path d="M 8 42 A 34 34 0 0 1 76 42" fill="none" stroke="var(--border2)" stroke-width="${sw}" stroke-linecap="round"/>
+      ${arc}
+      <text x="42" y="40" text-anchor="middle" font-size="12" font-weight="700" font-family="var(--fm)" fill="${color}">${Math.round(p*100)}%</text>
     </svg>`;
   }
 
-  // ── DATE FILTER UI ─────────────────────────────────────────
+  // ── PIE CHART ─────────────────────────────────────────────
+  function pieChart(slices, size=120){
+    const total=slices.reduce((s,x)=>s+x.val,0);
+    if(!total) return `<svg width="${size}" height="${size}"><circle cx="${size/2}" cy="${size/2}" r="${size/2-4}" fill="var(--border)" opacity=".3"/><text x="${size/2}" y="${size/2+4}" text-anchor="middle" font-size="10" fill="var(--text3)" font-family="var(--fm)">No data</text></svg>`;
+    let cumPct=0;
+    const paths=slices.filter(s=>s.val>0).map(s=>{
+      const startAngle=(cumPct/total)*2*Math.PI-Math.PI/2;
+      cumPct+=s.val;
+      const endAngle=(cumPct/total)*2*Math.PI-Math.PI/2;
+      const r=size/2-6,cx=size/2,cy=size/2;
+      const x1=cx+r*Math.cos(startAngle),y1=cy+r*Math.sin(startAngle);
+      const x2=cx+r*Math.cos(endAngle),y2=cy+r*Math.sin(endAngle);
+      const large=endAngle-startAngle>Math.PI?1:0;
+      const pctVal=Math.round(s.val/total*100);
+      return `<path d="M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z" 
+        fill="${s.color}" opacity=".85">
+        <title>${s.label}: ${s.display||pctVal+'%'}</title></path>`;
+    });
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${paths.join('')}<circle cx="${size/2}" cy="${size/2}" r="${size/4}" fill="var(--bg2)"/></svg>`;
+  }
+
+  const PIE_COLORS=['var(--accent)','var(--blue)','var(--purple)','var(--amber)','var(--coral)','var(--teal)'];
+
+  // ── DATE DROPDOWN ─────────────────────────────────────────
+  const dateDropdownId='dash-date-dd';
   const filterOpts=[
     ['all','All time'],['this_week','This week'],['this_month','This month'],
     ['this_quarter','This quarter'],['this_year','This year'],
     ['last_month','Last month'],['last_quarter','Last quarter'],['last_year','Last year'],
     ['custom','Custom range'],
   ];
-  const filterHTML=`
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap">
-      <span style="font-size:10px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase">Date scope</span>
-      <div style="display:flex;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden">
-        ${filterOpts.map(([v,l])=>`<button onclick="window._dashDateFilter='${v}';renderSalesDashboard()" 
-          style="padding:4px 10px;font-size:11px;font-family:var(--fm);border:none;cursor:pointer;white-space:nowrap;
-          background:${window._dashDateFilter===v?'var(--accent)':'transparent'};
-          color:${window._dashDateFilter===v?'#1a1a1a':'var(--text3)'};
-          font-weight:${window._dashDateFilter===v?'700':'400'}">${l}</button>`).join('')}
-      </div>
-      ${window._dashDateFilter==='custom'?`
-        <input type="date" id="dash-from" value="${window._dashDateFrom?window._dashDateFrom.toISOString().slice(0,10):''}"
-          onchange="window._dashDateFrom=this.value?new Date(this.value):null;renderSalesDashboard()"
-          style="padding:4px 8px;font-size:11px;font-family:var(--fm);background:var(--bg2);border:1px solid var(--border);border-radius:5px;color:var(--text)"/>
-        <span style="font-size:11px;color:var(--text3)">to</span>
-        <input type="date" id="dash-to" value="${window._dashDateTo?window._dashDateTo.toISOString().slice(0,10):''}"
-          onchange="window._dashDateTo=this.value?new Date(this.value):null;renderSalesDashboard()"
-          style="padding:4px 8px;font-size:11px;font-family:var(--fm);background:var(--bg2);border:1px solid var(--border);border-radius:5px;color:var(--text)"/>
-      `:''}
-      <span style="font-size:11px;color:var(--text3);font-family:var(--fm);margin-left:4px">${totalProjects} projects</span>
-    </div>`;
-
-  // ── TEAM SUMMARY BAR ───────────────────────────────────────
-  const teamPct=pct(totalWeighted,totalTarget);
-  const teamColor=teamPct>=100?'var(--accent)':teamPct>=70?'var(--amber)':'var(--coral)';
-  const summaryHTML=`
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-      ${[
-        ['Total Pipeline',fmGlobal(totalWeighted+totalSecured),'weighted forecast across all LMs'],
-        ['Secured Revenue',fmGlobal(totalSecured),'live projects in delivery'],
-        ['Team Target',fmGlobal(totalTarget),'FY2026 combined target'],
-        ['Team Achievement',teamPct+'%','weighted forecast vs target'],
-      ].map(([l,v,s])=>`
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">${l}</div>
-          <div style="font-size:20px;font-weight:700;font-family:var(--fm);color:var(--text)">${v}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:3px">${s}</div>
-        </div>`).join('')}
-    </div>`;
-
-  // ── LM CARDS ───────────────────────────────────────────────
-  const lmCardsHTML=`
-    <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Lead Manager Performance</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
-    ${Object.entries(LM_CONFIG).map(([key,cfg])=>{
-      const s=lmStats[key];
-      const target=window._lmTargets[key]||cfg.target;
-      const p=pct(s.weightedForecast,target);
-      const color=p>=100?'var(--accent)':p>=70?'var(--amber)':'var(--coral)';
-      const fxRate=FX[cfg.cur]||1;
-      const wf=s.weightedForecast*fxRate;
-      const tgt=target*fxRate;
-      const wfFmt=wf>=1e6?cfg.cur+' '+(wf/1e6).toFixed(1)+'M':cfg.cur+' '+Math.round(wf/1e3)+'K';
-      const tgtFmt=tgt>=1e6?cfg.cur+' '+(tgt/1e6).toFixed(1)+'M':cfg.cur+' '+Math.round(tgt/1e3)+'K';
-      const totalProj=s.projects.length;
-      return `
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;position:relative">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text)">${cfg.full}</div>
-              <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:2px">${totalProj} project${totalProj!==1?'s':''} · ${cfg.cur}</div>
-            </div>
-            <div style="text-align:center">
-              ${dial(s.weightedForecast,target,color)}
-              <div style="font-size:9px;font-family:var(--fm);color:var(--text3);margin-top:-4px">vs target</div>
-            </div>
-          </div>
-          
-          <!-- Forecast bar -->
-          <div style="margin-bottom:12px">
-            <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--fm);margin-bottom:4px">
-              <span style="color:var(--text2)">Weighted forecast</span>
-              <span style="color:${color};font-weight:600">${wfFmt}</span>
-            </div>
-            <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
-              <div style="height:100%;width:${Math.min(100,p)}%;background:${color};border-radius:2px;transition:width .4s"></div>
-            </div>
-            <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);margin-top:3px">Target: ${tgtFmt}</div>
-          </div>
-
-          <!-- Funnel -->
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px">
-            ${[
-              ['Leads',s.leads,'var(--text3)'],
-              ['Opps',s.opps,'var(--blue)'],
-              ['Props',s.proposals,'var(--purple)'],
-              ['Live',s.live,'var(--accent)'],
-              ['Closed',s.closed,'var(--coral)'],
-            ].map(([l,n,c])=>`
-              <div style="text-align:center;background:var(--bg3);border-radius:5px;padding:6px 4px">
-                <div style="font-size:14px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
-                <div style="font-size:9px;color:var(--text3);margin-top:1px">${l}</div>
-              </div>`).join('')}
-          </div>
-
-          <!-- Secured -->
-          <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border)">
-            <span style="font-size:10px;color:var(--text3);font-family:var(--fm)">Secured</span>
-            <span style="font-size:10px;font-weight:600;font-family:var(--fm);color:var(--teal)">${fmGBP(s.secured,key)}</span>
-          </div>
-
-          ${isJon?`
-          <!-- Target edit (Jon only) -->
-          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:6px">
-            <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3)">Target (${cfg.cur})</span>
-            <input type="number" value="${Math.round(tgt/1000)}" 
-              onchange="window._lmTargets['${key}']=this.value*1000/${fxRate};renderSalesDashboard()"
-              style="flex:1;padding:3px 6px;font-size:11px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:4px;color:var(--text);min-width:0"
-              placeholder="000s"/>
-            <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3)">K</span>
+  const dateFilterHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="position:relative">
+        <button onclick="document.getElementById('${dateDropdownId}').style.display=document.getElementById('${dateDropdownId}').style.display==='block'?'none':'block'"
+          style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--accent);color:#1a1a1a;border:none;border-radius:6px;font-size:12px;font-family:var(--fb);font-weight:600;cursor:pointer">
+          📅 ${filterLabel()} ▾
+        </button>
+        <div id="${dateDropdownId}" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px var(--sh);z-index:100;min-width:200px;padding:6px">
+          ${filterOpts.map(([v,l])=>`
+            <div onclick="window._dashDateFilter='${v}';document.getElementById('${dateDropdownId}').style.display='none';renderSalesDashboard()"
+              style="padding:7px 12px;font-size:12px;font-family:var(--fb);cursor:pointer;border-radius:5px;
+              background:${window._dashDateFilter===v?'rgba(141,198,63,.12)':'transparent'};
+              color:${window._dashDateFilter===v?'var(--accent)':'var(--text2)'};
+              font-weight:${window._dashDateFilter===v?'600':'400'}">${l}</div>`).join('')}
+          ${window._dashDateFilter==='custom'?`
+          <div style="padding:8px;border-top:1px solid var(--border);margin-top:4px">
+            <div style="font-size:10px;color:var(--text3);font-family:var(--fm);margin-bottom:6px">FROM</div>
+            <input type="date" value="${window._dashDateFrom?window._dashDateFrom.toISOString().slice(0,10):''}"
+              onchange="window._dashDateFrom=this.value?new Date(this.value):null;renderSalesDashboard()"
+              style="width:100%;padding:4px 8px;font-size:11px;background:var(--inp);border:1px solid var(--border2);border-radius:4px;color:var(--text);margin-bottom:6px"/>
+            <div style="font-size:10px;color:var(--text3);font-family:var(--fm);margin-bottom:6px">TO</div>
+            <input type="date" value="${window._dashDateTo?window._dashDateTo.toISOString().slice(0,10):''}"
+              onchange="window._dashDateTo=this.value?new Date(this.value):null;renderSalesDashboard()"
+              style="width:100%;padding:4px 8px;font-size:11px;background:var(--inp);border:1px solid var(--border2);border-radius:4px;color:var(--text)"/>
           </div>`:''}
-        </div>`;
-    }).join('')}
-    </div>`;
-
-  // ── STAGE PIPELINE CHART ────────────────────────────────────
-  const stageOrder=['New Lead','Att. to contact','Contacted','Information Pending','Qualified','In Assessment','Proposal','Negotiation','Live','Closed Lead'];
-  const stageFees={};const stageCount={};
-  ids.forEach(id=>{
-    const p=PROJECTS[id];const pipe=getPipe(id);
-    const stage=pipe.stage||'New Lead';
-    stageCount[stage]=(stageCount[stage]||0)+1;
-    let feeGBP=0;
-    try{feeGBP=getTotalProjectFeeGBP(id)||0;}catch(e){}
-    if(!feeGBP&&p.efee&&!isNaN(p.efee))feeGBP=parseFloat(p.efee)*(FX.GBP/FX[p.feecur||'GBP']);
-    stageFees[stage]=(stageFees[stage]||0)+feeGBP;
-  });
-  const maxCount=Math.max(...stageOrder.map(s=>stageCount[s]||0));
-  const stageColors={'New Lead':'var(--text3)','Att. to contact':'var(--blue)','Contacted':'var(--blue)',
-    'Information Pending':'var(--blue)','Qualified':'var(--accent2)','In Assessment':'var(--accent2)',
-    'Proposal':'var(--purple)','Negotiation':'var(--purple)','Live':'var(--teal)','Closed Lead':'var(--coral)'};
-
-  const stageHTML=`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
-        <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Pipeline by Stage</div>
-        ${stageOrder.filter(s=>stageCount[s]).map(s=>{
-          const cnt=stageCount[s]||0;
-          const w=maxCount>0?Math.round(cnt/maxCount*90):0;
-          return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-            <div style="width:120px;font-size:11px;color:var(--text2);text-align:right;flex-shrink:0">${s}</div>
-            <div style="flex:1;height:18px;background:var(--bg3);border-radius:3px;overflow:hidden">
-              <div style="height:100%;width:${w}%;background:${stageColors[s]||'#888'};border-radius:3px;display:flex;align-items:center;padding-left:6px">
-                <span style="font-size:10px;font-family:var(--fm);font-weight:600;color:#fff">${cnt}</span>
-              </div>
-            </div>
-            <div style="width:80px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right">${fmGlobal(stageFees[s]||0)}</div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
-        <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Forecast Summary</div>
-        ${[
-          ['Secured (Live)','var(--teal)',totalSecured,'100% probability'],
-          ['Hot / Tendered','var(--purple)',(lmStats['T. Ryan'].weightedForecast+lmStats['A. Tizard'].weightedForecast+lmStats['D. Watts'].weightedForecast+lmStats['J. Phillips'].weightedForecast+lmStats['B. Whitfield'].weightedForecast+lmStats['J. Fox'].weightedForecast)-totalSecured,'Proposal + Negotiation weighted'],
-          ['Total Weighted','var(--text)',totalWeighted,'All stages weighted'],
-          ['Team Target','var(--border2)',totalTarget,'FY2026'],
-        ].map(([l,c,v,s])=>`
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:8px;height:8px;border-radius:2px;background:${c};display:inline-block;flex-shrink:0"></span>
-              <div>
-                <div style="font-size:12px;color:var(--text)">${l}</div>
-                <div style="font-size:9.5px;color:var(--text3);font-family:var(--fm)">${s}</div>
-              </div>
-            </div>
-            <span style="font-size:13px;font-weight:600;font-family:var(--fm);color:var(--text)">${fmGlobal(v)}</span>
-          </div>`).join('')}
-        <div style="margin-top:12px">
-          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--fm);margin-bottom:4px">
-            <span style="color:var(--text2)">Team achievement</span>
-            <span style="color:${teamColor};font-weight:700">${teamPct}%</span>
-          </div>
-          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-            <div style="height:100%;width:${Math.min(100,teamPct)}%;background:${teamColor};border-radius:3px"></div>
-          </div>
         </div>
       </div>
+      <span style="font-size:11px;color:var(--text3);font-family:var(--fm)">${allIds.length} projects in view</span>
     </div>`;
 
-  el.innerHTML = filterHTML + summaryHTML + lmCardsHTML + stageHTML;
+  // ── OWNER VIEW ────────────────────────────────────────────
+  if(isOwner){
+
+    // Team KPI bar
+    const kpiHTML=`
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px">
+        ${[
+          ['Total Pipeline',fmGBP(totalWeighted+totalSecured),'weighted forecast + secured'],
+          ['Secured Revenue',fmGBP(totalSecured),'live projects in delivery'],
+          ['FY2026 Target',fmGBP(totalTarget),'combined team target'],
+          ['Achievement',teamPct+'%','weighted forecast vs target'],
+        ].map(([l,v,s],i)=>`
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+            <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">${l}</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--fm);color:${i===3?teamColor:'var(--text)'}">${v}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:3px">${s}</div>
+          </div>`).join('')}
+      </div>`;
+
+    // LM Cards
+    const lmCardsHTML=`
+      <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Lead Manager Performance</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px">
+      ${lmKeys.map(key=>{
+        const s=lmStats[key];
+        const cfg=LM_CONFIG[key];
+        const target=window._lmTargets[key]||1;
+        const p=pct(s.weightedForecast,target);
+        const color=p>=100?'var(--accent)':p>=70?'var(--amber)':'var(--coral)';
+        const fxRate=FX[cfg.fxKey]||1;
+        const winRate=s.live+s.closed>0?Math.round(s.live/(s.live+s.closed)*100):0;
+        const avgDeal=s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—';
+        return `
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text)">${cfg.full}</div>
+                <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:2px">${s.ids.length} projects · ${cfg.cur}</div>
+              </div>
+              <div style="text-align:center">
+                ${dial(s.weightedForecast,target,color)}
+                <div style="font-size:9px;font-family:var(--fm);color:var(--text3);margin-top:-4px">vs target</div>
+              </div>
+            </div>
+            <!-- Forecast bar -->
+            <div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--fm);margin-bottom:3px">
+                <span style="color:var(--text2)">Weighted forecast</span>
+                <span style="color:${color};font-weight:600">${fmLM(s.weightedForecast,key)}</span>
+              </div>
+              <div style="height:4px;background:var(--border);border-radius:2px">
+                <div style="height:100%;width:${Math.min(100,p)}%;background:${color};border-radius:2px"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:9.5px;font-family:var(--fm);color:var(--text3);margin-top:2px">
+                <span>Target: ${fmLM(target,key)}</span>
+                <span>Secured: ${fmLM(s.secured,key)}</span>
+              </div>
+            </div>
+            <!-- Funnel -->
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-bottom:10px">
+              ${[['L',s.leads+s.contacted,'var(--text3)'],['O',s.opps,'var(--blue)'],['P',s.proposals,'var(--purple)'],['N',s.negotiation,'var(--amber)'],['✓',s.live,'var(--accent)'],['✗',s.closed,'var(--coral)']].map(([l,n,c])=>`
+                <div style="text-align:center;background:var(--bg3);border-radius:4px;padding:5px 2px">
+                  <div style="font-size:13px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
+                  <div style="font-size:8px;color:var(--text3)">${l}</div>
+                </div>`).join('')}
+            </div>
+            <!-- Win rate + avg deal -->
+            <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border)">
+              <div style="text-align:center">
+                <div style="font-size:11px;font-weight:600;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
+                <div style="font-size:9px;color:var(--text3)">Win rate</div>
+              </div>
+              <div style="text-align:center">
+                <div style="font-size:11px;font-weight:600;font-family:var(--fm);color:var(--text)">${avgDeal}</div>
+                <div style="font-size:9px;color:var(--text3)">Avg deal</div>
+              </div>
+              <div style="text-align:center">
+                <div style="font-size:11px;font-weight:600;font-family:var(--fm);color:var(--teal)">${fmLM(s.secured,key)}</div>
+                <div style="font-size:9px;color:var(--text3)">Secured</div>
+              </div>
+            </div>
+            <!-- Target edit (owner only) -->
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;align-items:center;gap:6px">
+              <span style="font-size:9px;font-family:var(--fm);color:var(--text3);flex-shrink:0">Target (${cfg.cur})</span>
+              <input type="number" value="${Math.round((target*fxRate)/1000)}"
+                onchange="window._lmTargets['${key}']=this.value*1000/${fxRate};renderSalesDashboard()"
+                style="flex:1;padding:3px 6px;font-size:11px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:4px;color:var(--text);min-width:0"/>
+              <span style="font-size:9px;font-family:var(--fm);color:var(--text3)">K</span>
+            </div>
+          </div>`;
+      }).join('')}
+      </div>`;
+
+    // Pie charts row
+    const pieSlicesActual=lmKeys.map((k,i)=>({val:lmStats[k].secured,label:LM_CONFIG[k].full,color:PIE_COLORS[i],display:fmGBP(lmStats[k].secured)}));
+    const pieSlicesForecast=lmKeys.map((k,i)=>({val:lmStats[k].weightedForecast,label:LM_CONFIG[k].full,color:PIE_COLORS[i],display:fmGBP(lmStats[k].weightedForecast)}));
+
+    const pieHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Secured Revenue by LM</div>
+          <div style="display:flex;align-items:center;gap:16px">
+            ${pieChart(pieSlicesActual,120)}
+            <div style="flex:1">
+              ${lmKeys.map((k,i)=>lmStats[k].secured>0?`
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+                  <span style="width:8px;height:8px;border-radius:2px;background:${PIE_COLORS[i]};flex-shrink:0"></span>
+                  <span style="font-size:11px;color:var(--text2);flex:1">${LM_CONFIG[k].full}</span>
+                  <span style="font-size:11px;font-family:var(--fm);font-weight:600;color:var(--text)">${fmGBP(lmStats[k].secured)}</span>
+                </div>`:'').join('')}
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Weighted Forecast by LM</div>
+          <div style="display:flex;align-items:center;gap:16px">
+            ${pieChart(pieSlicesForecast,120)}
+            <div style="flex:1">
+              ${lmKeys.map((k,i)=>lmStats[k].weightedForecast>0?`
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+                  <span style="width:8px;height:8px;border-radius:2px;background:${PIE_COLORS[i]};flex-shrink:0"></span>
+                  <span style="font-size:11px;color:var(--text2);flex:1">${LM_CONFIG[k].full}</span>
+                  <span style="font-size:11px;font-family:var(--fm);font-weight:600;color:var(--text)">${fmGBP(lmStats[k].weightedForecast)}</span>
+                </div>`:'').join('')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    // Stage pipeline chart
+    const stageOrder=['New Lead','Att. to contact','Contacted','Information Pending','Qualified','In Assessment','Proposal','Negotiation','Live','Closed Lead'];
+    const stageFees={},stageCount={};
+    allIds.forEach(id=>{
+      const p=PROJECTS[id];const pipe=getPipe(id);
+      const stage=pipe.stage||'New Lead';
+      stageCount[stage]=(stageCount[stage]||0)+1;
+      let feeGBP=0;
+      try{feeGBP=getTotalProjectFeeGBP(id)||0;}catch(e){}
+      if(!feeGBP&&p.efee&&!isNaN(p.efee)) feeGBP=parseFloat(p.efee)*(FX.GBP/FX[p.feecur||'GBP']);
+      stageFees[stage]=(stageFees[stage]||0)+feeGBP;
+    });
+    const maxCount=Math.max(1,...stageOrder.map(s=>stageCount[s]||0));
+    const stageColors={'New Lead':'var(--text3)','Att. to contact':'var(--blue)','Contacted':'var(--blue)',
+      'Information Pending':'#5b8dd9','Qualified':'var(--accent2)','In Assessment':'var(--accent2)',
+      'Proposal':'var(--purple)','Negotiation':'var(--amber)','Live':'var(--teal)','Closed Lead':'var(--coral)'};
+
+    const stageHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Pipeline by Stage</div>
+          ${stageOrder.filter(s=>stageCount[s]).map(s=>`
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+              <div style="width:120px;font-size:11px;color:var(--text2);text-align:right;flex-shrink:0">${s}</div>
+              <div style="flex:1;height:18px;background:var(--bg3);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${Math.round((stageCount[s]||0)/maxCount*90)}%;background:${stageColors[s]||'#888'};border-radius:3px;display:flex;align-items:center;padding-left:6px">
+                  <span style="font-size:10px;font-family:var(--fm);font-weight:600;color:#fff">${stageCount[s]}</span>
+                </div>
+              </div>
+              <div style="width:80px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right">${fmGBP(stageFees[s]||0)}</div>
+            </div>`).join('')}
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Forecast Summary</div>
+          ${[
+            ['Secured (Live)','var(--teal)',totalSecured,'100% probability · in delivery'],
+            ['Hot Pipeline','var(--purple)',lmKeys.reduce((s,k)=>s+(lmStats[k].proposals*0+lmStats[k].weightedForecast),0)-totalSecured,'All stages weighted excl. secured'],
+            ['Total Weighted','var(--text)',totalWeighted,'All active stages'],
+            ['FY2026 Target','var(--border2)',totalTarget,'Combined team target'],
+          ].map(([l,c,v,s])=>`
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="width:8px;height:8px;border-radius:2px;background:${c};display:inline-block;flex-shrink:0"></span>
+                <div>
+                  <div style="font-size:12px;color:var(--text)">${l}</div>
+                  <div style="font-size:9.5px;color:var(--text3);font-family:var(--fm)">${s}</div>
+                </div>
+              </div>
+              <span style="font-size:13px;font-weight:600;font-family:var(--fm);color:var(--text)">${fmGBP(v)}</span>
+            </div>`).join('')}
+          <div style="margin-top:12px">
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--fm);margin-bottom:4px">
+              <span style="color:var(--text2)">Team achievement</span>
+              <span style="color:${teamColor};font-weight:700">${teamPct}% of target</span>
+            </div>
+            <div style="height:6px;background:var(--border);border-radius:3px">
+              <div style="height:100%;width:${Math.min(100,teamPct)}%;background:${teamColor};border-radius:3px"></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    el.innerHTML = dateFilterHTML + kpiHTML + lmCardsHTML + pieHTML + stageHTML;
+
+  } else {
+    // ── INDIVIDUAL LM VIEW ────────────────────────────────────
+    const key = myLmKey;
+    const s = key ? lmStats[key] : null;
+    const cfg = key ? LM_CONFIG[key] : null;
+
+    if(!s||!cfg){
+      el.innerHTML = dateFilterHTML + `<div style="padding:40px;text-align:center;color:var(--text3);font-family:var(--fm)">No pipeline data found for your profile.</div>`;
+      return;
+    }
+
+    const target=window._lmTargets[key]||1;
+    const p=pct(s.weightedForecast,target);
+    const color=p>=100?'var(--accent)':p>=70?'var(--amber)':'var(--coral)';
+    const winRate=s.live+s.closed>0?Math.round(s.live/(s.live+s.closed)*100):0;
+
+    // Stage breakdown for this LM
+    const myStageCount={},myStageFees={};
+    s.ids.forEach(id=>{
+      const pp=PROJECTS[id];const pipe=getPipe(id);
+      const stage=pipe.stage||'New Lead';
+      myStageCount[stage]=(myStageCount[stage]||0)+1;
+      let feeGBP=0;
+      try{feeGBP=getTotalProjectFeeGBP(id)||0;}catch(e){}
+      if(!feeGBP&&pp.efee&&!isNaN(pp.efee)) feeGBP=parseFloat(pp.efee)*(FX.GBP/FX[pp.feecur||'GBP']);
+      myStageFees[stage]=(myStageFees[stage]||0)+feeGBP;
+    });
+    const myStageOrder=['New Lead','Att. to contact','Contacted','Information Pending','Qualified','In Assessment','Proposal','Negotiation','Live','Closed Lead'];
+    const myMaxCount=Math.max(1,...myStageOrder.map(ss=>myStageCount[ss]||0));
+
+    const myKpiHTML=`
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px">
+        ${[
+          ['My Pipeline',fmLM(s.weightedForecast+s.secured,key),'weighted forecast + secured'],
+          ['Secured',fmLM(s.secured,key),'live projects in delivery'],
+          ['My Target',fmLM(target,key),'FY2026 target'],
+          ['Achievement',p+'%','weighted forecast vs target'],
+        ].map(([l,v,sub],i)=>`
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+            <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">${l}</div>
+            <div style="font-size:20px;font-weight:700;font-family:var(--fm);color:${i===3?color:'var(--text)'}">${v}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:3px">${sub}</div>
+          </div>`).join('')}
+      </div>`;
+
+    const myFunnelHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">My Funnel</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            ${[['Leads',s.leads+s.contacted,'var(--text3)'],['Opps',s.opps,'var(--blue)'],['Props',s.proposals,'var(--purple)'],['Neg.',s.negotiation,'var(--amber)'],['Live',s.live,'var(--accent)'],['Closed',s.closed,'var(--coral)']].map(([l,n,c])=>`
+              <div style="text-align:center">
+                <div style="font-size:22px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
+                <div style="font-size:9.5px;color:var(--text3);margin-top:2px">${l}</div>
+              </div>`).join('<div style="color:var(--border2);font-size:14px">›</div>')}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-top:12px;border-top:1px solid var(--border)">
+            <div style="text-align:center">
+              <div style="font-size:16px;font-weight:700;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
+              <div style="font-size:9.5px;color:var(--text3)">Win rate</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:16px;font-weight:700;font-family:var(--fm);color:var(--text)">${s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—'}</div>
+              <div style="font-size:9.5px;color:var(--text3)">Avg deal size</div>
+            </div>
+          </div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Forecast vs Target</div>
+          <div style="display:flex;align-items:center;justify-content:center;gap:20px">
+            ${dial(s.weightedForecast,target,color)}
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Weighted forecast</div>
+              <div style="font-size:18px;font-weight:700;font-family:var(--fm);color:${color}">${fmLM(s.weightedForecast,key)}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:6px">Target: ${fmLM(target,key)}</div>
+              <div style="font-size:11px;color:var(--teal);margin-top:4px">Secured: ${fmLM(s.secured,key)}</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    const myStageHTML=`
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+        <div style="font-size:9.5px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">My Pipeline by Stage</div>
+        ${myStageOrder.filter(ss=>myStageCount[ss]).map(ss=>{
+          const stageColors2={'New Lead':'var(--text3)','Att. to contact':'var(--blue)','Contacted':'var(--blue)',
+            'Information Pending':'#5b8dd9','Qualified':'var(--accent2)','In Assessment':'var(--accent2)',
+            'Proposal':'var(--purple)','Negotiation':'var(--amber)','Live':'var(--teal)','Closed Lead':'var(--coral)'};
+          return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+            <div style="width:140px;font-size:11px;color:var(--text2);text-align:right;flex-shrink:0">${ss}</div>
+            <div style="flex:1;height:18px;background:var(--bg3);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:${Math.round((myStageCount[ss]||0)/myMaxCount*90)}%;background:${stageColors2[ss]||'#888'};border-radius:3px;display:flex;align-items:center;padding-left:6px">
+                <span style="font-size:10px;font-family:var(--fm);font-weight:600;color:#fff">${myStageCount[ss]}</span>
+              </div>
+            </div>
+            <div style="width:90px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right">${fmLM(myStageFees[ss]||0,key)}</div>
+          </div>`;
+        }).join('')}
+      </div>`;
+
+    el.innerHTML = dateFilterHTML + myKpiHTML + myFunnelHTML + myStageHTML;
+  }
 }
 
 
@@ -4211,8 +4442,8 @@ function dotHtml(n){return `<div class="att-dots">${[1,2,3].map(i=>`<div class="
 
 // ══ STAGE TRANSITIONS ═════════════════════════════════════
 function logAttempt(id){const p=getPipe(id);p.attempts=Math.min(p.attempts+1,3);p.stage='Att. to contact';updateAll(id);toast('Attempt '+p.attempts+' logged');}
-function markContacted(id){getPipe(id).stage='Contacted';moveCardToCol(id,'cct');updateAll(id);toast('Marked as contacted');}
-function autoClose(id){getPipe(id).closedReason='No response after 3 attempts';getPipe(id).stage='Closed Lead';moveCardToCol(id,'ccl');updateAll(id);toast('Auto-closed');}
+function markContacted(id){getPipe(id).stage='Contacted';moveCardToCol(id,'cct');updateAll(id);logStageChange(id,'Contacted');toast('Marked as contacted');}
+function autoClose(id){getPipe(id).closedReason='No response after 3 attempts';getPipe(id).stage='Closed Lead';moveCardToCol(id,'ccl');updateAll(id);logStageChange(id,'Closed Lead');toast('Auto-closed');}
 function allTabsComplete(id){
   const ps=getPS(id);
   return ps.cvVisited && ps.selRoles.size>0 && feeHasValues(id);
@@ -4225,10 +4456,10 @@ function missingTabsList(id){
   return miss.join(', ')||'none';
 }
 
-function advanceToProposal(id){getPipe(id).stage='Proposal';moveCardToCol(id,'cpr');updateAll(id);toast('Advanced to Proposal stage');}
-function advanceToNegotiation(id){getPipe(id).stage='Negotiation';moveCardToCol(id,'cng');updateAll(id);toast('Advanced to Negotiation');}
-function markLive(id){getPipe(id).stage='Live';moveCardToCol(id,'clv');updateAll(id);toast('Congratulations — marked as Live!');}
-function reOpenLead(id){const p=getPipe(id);p.stage='New Lead';p.attempts=0;p.closedReason=null;moveCardToCol(id,'cnew');updateAll(id);toast('Lead re-opened');}
+function advanceToProposal(id){getPipe(id).stage='Proposal';moveCardToCol(id,'cpr');updateAll(id);logStageChange(id,'Proposal');toast('Advanced to Proposal stage');}
+function advanceToNegotiation(id){getPipe(id).stage='Negotiation';moveCardToCol(id,'cng');updateAll(id);logStageChange(id,'Negotiation');toast('Advanced to Negotiation');}
+function markLive(id){getPipe(id).stage='Live';moveCardToCol(id,'clv');updateAll(id);logStageChange(id,'Live');toast('Congratulations — marked as Live!');}
+function reOpenLead(id){const p=getPipe(id);p.stage='New Lead';p.attempts=0;p.closedReason=null;moveCardToCol(id,'cnew');updateAll(id);logStageChange(id,'New Lead');toast('Lead re-opened');}
 
 function closeLead(id){
   const reasons=['No response / unreachable','Not qualified for PPa','Budget not available','Client withdrew / on hold','Lost to competitor','Duplicate entry'];
@@ -4238,7 +4469,7 @@ function closeLead(id){
   const ma=document.getElementById('ma');ma.innerHTML='';
   const cancel=document.createElement('button');cancel.className='btn bg bsm';cancel.textContent='Cancel';cancel.onclick=closeModal;
   const conf=document.createElement('button');conf.className='btn bd bsm';conf.textContent='Confirm close';conf.disabled=true;conf.style.opacity='.5';
-  conf.onclick=()=>{getPipe(id).closedReason=chosen;getPipe(id).stage='Closed Lead';moveCardToCol(id,'ccl');updateAll(id);closeModal();toast('Lead closed');};
+  conf.onclick=()=>{getPipe(id).closedReason=chosen;getPipe(id).stage='Closed Lead';moveCardToCol(id,'ccl');updateAll(id);logStageChange(id,'Closed Lead');closeModal();toast('Lead closed');};
   ma.appendChild(cancel);ma.appendChild(conf);
   window.pickReason=(i)=>{document.querySelectorAll('.reason-opt').forEach((el,j)=>el.classList.toggle('on',j===i));chosen=reasons[i];conf.disabled=false;conf.style.opacity='1';};
   (()=>{const _e=document.getElementById('modal-box');if(_e)_e.style.maxWidth='380px'})();
