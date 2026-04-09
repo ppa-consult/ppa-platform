@@ -3065,14 +3065,13 @@ function renderSalesDashboard(){
     'B. Whitfield':{full:'Ben Whitfield', cur:'GBP', fx:'GBP'},
     'J. Fox':     {full:'Jeff Fox',       cur:'AED', fx:'AED'},
   };
-  // Targets stored in GBP equivalent
   const DEFAULT_TARGETS={
-    'T. Ryan':   15000000/3.67, // AED 15M
+    'T. Ryan':   15000000/3.67,
     'A. Tizard': 8000000,
     'D. Watts':  6000000,
     'J. Phillips':10000000,
     'B. Whitfield':3000000,
-    'J. Fox':    5000000/3.67,  // AED 5M
+    'J. Fox':    5000000/3.67,
   };
   if(!window._lmTargets) window._lmTargets={...DEFAULT_TARGETS};
   if(!window._lmTargetEditing) window._lmTargetEditing={};
@@ -3116,7 +3115,7 @@ function renderSalesDashboard(){
   const lmStats={};
   Object.keys(LM_CONFIG).forEach(k=>{
     lmStats[k]={leads:0,contacted:0,opps:0,proposals:0,negotiation:0,live:0,closed:0,
-      weightedForecast:0,secured:0,totalFeeGBP:0,ids:[]};
+      weightedForecast:0,won:0,totalFeeGBP:0,ids:[]};
   });
   const allIds=Object.keys(PROJECTS).filter(inRange);
   allIds.forEach(id=>{
@@ -3131,7 +3130,7 @@ function renderSalesDashboard(){
     if(!feeGBP&&p.efee&&!isNaN(p.efee)) feeGBP=parseFloat(p.efee)*(FX.GBP/FX[p.feecur||'GBP']);
     s.totalFeeGBP+=feeGBP;
     s.weightedForecast+=feeGBP*prob;
-    if(stage==='Live'){s.live++;s.secured+=feeGBP;}
+    if(stage==='Live'){s.live++;s.won+=feeGBP;}
     else if(['Closed Lead','Lost'].includes(stage)) s.closed++;
     else if(stage==='Negotiation') s.negotiation++;
     else if(stage==='Proposal') s.proposals++;
@@ -3142,7 +3141,7 @@ function renderSalesDashboard(){
 
   const lmKeys=Object.keys(LM_CONFIG);
   const totalWeighted=lmKeys.reduce((s,k)=>s+lmStats[k].weightedForecast,0);
-  const totalSecured=lmKeys.reduce((s,k)=>s+lmStats[k].secured,0);
+  const totalWon=lmKeys.reduce((s,k)=>s+lmStats[k].won,0);
   const totalTarget=lmKeys.reduce((s,k)=>s+(window._lmTargets[k]||0),0);
   const teamPct=totalTarget>0?Math.min(100,Math.round(totalWeighted/totalTarget*100)):0;
   const teamColor=teamPct>=100?'var(--accent)':teamPct>=70?'var(--amber)':'var(--coral)';
@@ -3166,38 +3165,48 @@ function renderSalesDashboard(){
   }
   function pct(a,b){return b>0?Math.min(100,Math.round(a/b*100)):0;}
 
-  // ── PIE CHART (actual/forecast/target/remaining) ──────────
-  function forecastPie(secured,weighted,target,size){
-    size=size||130;
-    const cx=size/2,cy=size/2,r=size/2-8,ir=size/4;
-    const remaining=Math.max(0,target-weighted-secured);
-    // Segments: secured=teal, weighted forecast=purple, remaining=border
-    const total=Math.max(target,secured+weighted+1);
-    const slices=[
-      {val:secured,   color:'var(--teal)',   label:'Secured'},
-      {val:Math.max(0,weighted-secured), color:'var(--purple)', label:'Forecast'},
-      {val:remaining, color:'var(--border)', label:'Remaining'},
-    ].filter(s=>s.val>0);
-    if(!slices.length) return `<svg width="${size}" height="${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--border)" opacity=".3"/></svg>`;
-    let cumAngle=-Math.PI/2;
-    const paths=slices.map(s=>{
-      const sweep=(s.val/total)*2*Math.PI;
-      const x1=cx+r*Math.cos(cumAngle),y1=cy+r*Math.sin(cumAngle);
-      cumAngle+=sweep;
-      const x2=cx+r*Math.cos(cumAngle),y2=cy+r*Math.sin(cumAngle);
-      const large=sweep>Math.PI?1:0;
-      return`<path d="M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z" fill="${s.color}" opacity=".88"><title>${s.label}</title></path>`;
-    });
-    const p2=Math.min(100,total>0?Math.round((secured+weighted)/total*100):0);
-    return`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      ${paths.join('')}
-      <circle cx="${cx}" cy="${cy}" r="${ir}" fill="var(--bg2)"/>
-      <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="13" font-weight="700" font-family="var(--fm)" fill="var(--text)">${p2}%</text>
-      <text x="${cx}" y="${cy+10}" text-anchor="middle" font-size="8" font-family="var(--fm)" fill="var(--text3)">of target</text>
-    </svg>`;
+  // ── BULLET BAR with target marker ────────────────────────
+  function bulletBar(actual,forecast,target,lmKey,label1,label2){
+    const cfg=LM_CONFIG[lmKey]||{cur:'GBP',fx:'GBP'};
+    const max=Math.max(target*1.1,forecast*1.05,actual*1.05,1);
+    const wonPct=Math.min(100,actual/max*100);
+    const forecastPct=Math.min(100,forecast/max*100);
+    const targetPct=Math.min(99,target/max*100);
+    const wonColor='var(--teal)';
+    const forecastColor='var(--purple)';
+    return`
+      <div style="margin-bottom:12px">
+        <!-- Won bar -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+          <div style="width:70px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right;flex-shrink:0">${label1}</div>
+          <div style="flex:1;position:relative;height:14px;background:var(--bg3);border-radius:3px;overflow:visible">
+            <div style="height:100%;width:${wonPct}%;background:${wonColor};border-radius:3px;transition:width .4s"></div>
+            <!-- Target marker -->
+            <div style="position:absolute;top:-3px;bottom:-3px;left:${targetPct}%;width:2px;background:var(--text);border-radius:1px;z-index:2" title="Target: ${fmLM(target,lmKey)}"></div>
+          </div>
+          <div style="width:80px;font-size:10px;font-family:var(--fm);font-weight:600;color:${wonColor};text-align:right;flex-shrink:0">${fmLM(actual,lmKey)}</div>
+        </div>
+        <!-- Forecast bar -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:70px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right;flex-shrink:0">${label2}</div>
+          <div style="flex:1;position:relative;height:14px;background:var(--bg3);border-radius:3px;overflow:visible">
+            <div style="height:100%;width:${forecastPct}%;background:${forecastColor};border-radius:3px;opacity:.85;transition:width .4s"></div>
+            <!-- Target marker -->
+            <div style="position:absolute;top:-3px;bottom:-3px;left:${targetPct}%;width:2px;background:var(--text);border-radius:1px;z-index:2" title="Target: ${fmLM(target,lmKey)}"></div>
+          </div>
+          <div style="width:80px;font-size:10px;font-family:var(--fm);font-weight:600;color:${forecastColor};text-align:right;flex-shrink:0">${fmLM(forecast,lmKey)}</div>
+        </div>
+        <!-- Legend -->
+        <div style="display:flex;align-items:center;gap:12px;margin-top:5px;padding-left:78px">
+          <span style="font-size:9px;font-family:var(--fm);color:var(--text3);display:flex;align-items:center;gap:3px">
+            <span style="display:inline-block;width:2px;height:10px;background:var(--text);border-radius:1px"></span>Target ${fmLM(target,lmKey)}
+          </span>
+          <span style="font-size:9px;font-family:var(--fm);color:var(--text3)">${pct(actual,target)}% won · ${pct(forecast,target)}% forecast</span>
+        </div>
+      </div>`;
   }
 
-  // ── DONUT PIE (for team charts) ───────────────────────────
+  // ── DONUT PIE ─────────────────────────────────────────────
   function donutPie(slices,size){
     size=size||120;
     const cx=size/2,cy=size/2,r=size/2-6,ir=r*0.55;
@@ -3214,7 +3223,6 @@ function renderSalesDashboard(){
     return`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${paths.join('')}<circle cx="${cx}" cy="${cy}" r="${ir}" fill="var(--bg2)"/></svg>`;
   }
 
-  // Platform accent colours per LM (consistent)
   const LM_COLORS=['var(--accent)','var(--blue)','var(--purple)','var(--amber)','var(--coral)','var(--teal)'];
 
   // ── DATE FILTER UI ────────────────────────────────────────
@@ -3249,14 +3257,70 @@ function renderSalesDashboard(){
       <span style="font-size:11px;color:var(--text3);font-family:var(--fm)">${allIds.length} projects</span>
     </div>`;
 
+  // ── SHARED LM CARD BODY ───────────────────────────────────
+  // Used in both owner and individual view
+  function lmCardBody(key, showTargetEdit){
+    const s=lmStats[key]; const cfg=LM_CONFIG[key];
+    const target=window._lmTargets[key]||DEFAULT_TARGETS[key];
+    const isEditing=showTargetEdit&&!!window._lmTargetEditing[key];
+    const winRate=s.live+s.closed>0?Math.round(s.live/(s.live+s.closed)*100):0;
+    const avgDeal=s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—';
+    const nativeTarget=toNative(target,key);
+    const nativeTargetFmt=nativeTarget>=1e6?cfg.cur+' '+(nativeTarget/1e6).toFixed(2)+'M':cfg.cur+' '+Math.round(nativeTarget).toLocaleString();
+
+    return`
+      <!-- Bullet bars: Won + Forecast vs Target -->
+      ${bulletBar(s.won,s.weightedForecast,target,key,'Won','Forecast')}
+      <!-- Funnel -->
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-bottom:10px">
+        ${[['L',s.leads+s.contacted,'var(--text3)','Leads'],['O',s.opps,'var(--blue)','Opps'],['P',s.proposals,'var(--purple)','Props'],['N',s.negotiation,'var(--amber)','Neg.'],['✓',s.live,'var(--accent)','Won'],['✗',s.closed,'var(--coral)','Lost']].map(([l,n,c,tt])=>`
+          <div title="${tt}" style="text-align:center;background:var(--bg3);border-radius:4px;padding:5px 2px">
+            <div style="font-size:14px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
+            <div style="font-size:8px;color:var(--text3)">${l}</div>
+          </div>`).join('')}
+      </div>
+      <!-- Stats row -->
+      <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px">
+        <div style="text-align:center">
+          <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
+          <div style="font-size:9px;color:var(--text3)">Win rate</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--text)">${avgDeal}</div>
+          <div style="font-size:9px;color:var(--text3)">Avg deal</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--teal)">${fmLM(s.won,key)}</div>
+          <div style="font-size:9px;color:var(--text3)">Won</div>
+        </div>
+      </div>
+      <!-- Target -->
+      ${showTargetEdit?(isEditing?`
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3);flex-shrink:0">${cfg.cur}</span>
+          <input id="tgt-${key.replace(/[\s.]/g,'_')}" type="number"
+            value="${Math.round(nativeTarget)}"
+            style="flex:1;padding:5px 8px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--accent);border-radius:5px;color:var(--text);min-width:0"/>
+          <button onclick="(()=>{const v=parseFloat(document.getElementById('tgt-${key.replace(/[\s.]/g,'_')}').value)||0;window._lmTargets['${key}']=v/${FX[cfg.fx]||1};window._lmTargetEditing['${key}']=false;renderSalesDashboard()})()"
+            style="padding:5px 12px;background:var(--accent);color:#1a1a1a;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>
+          <button onclick="window._lmTargetEditing['${key}']=false;renderSalesDashboard()"
+            style="padding:5px 8px;background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:5px;font-size:11px;cursor:pointer">✕</button>
+        </div>`:`
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:10px;font-family:var(--fm);color:var(--text3)">Target: <strong style="color:var(--text)">${nativeTargetFmt}</strong></span>
+          <button onclick="window._lmTargetEditing['${key}']=true;renderSalesDashboard()"
+            style="padding:3px 10px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">✎ Edit</button>
+        </div>`):`
+        <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Target: <strong style="color:var(--text)">${nativeTargetFmt}</strong></div>`}`;
+  }
+
   // ── OWNER VIEW ────────────────────────────────────────────
   if(isOwner){
-    // KPI bar
     const kpiHTML=`
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
         ${[
-          ['Total Pipeline',fmGBP(totalWeighted+totalSecured),'weighted forecast + secured','var(--text)'],
-          ['Secured Revenue',fmGBP(totalSecured),'live projects · 100% probability','var(--teal)'],
+          ['Total Pipeline',fmGBP(totalWeighted+totalWon),'weighted forecast + won','var(--text)'],
+          ['Total Won',fmGBP(totalWon),'live projects · 100% probability','var(--teal)'],
           ['FY2026 Target',fmGBP(totalTarget),'combined team target','var(--text)'],
           ['Team Achievement',teamPct+'%','weighted forecast vs target',teamColor],
         ].map(([l,v,s,c])=>`
@@ -3267,87 +3331,28 @@ function renderSalesDashboard(){
           </div>`).join('')}
       </div>`;
 
-    // LM cards
     const lmCardsHTML=`
       <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">Lead Manager Performance</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
       ${lmKeys.map((key,ki)=>{
         const s=lmStats[key];const cfg=LM_CONFIG[key];
-        const target=window._lmTargets[key]||DEFAULT_TARGETS[key];
-        const p2=pct(s.weightedForecast,target);
-        const color=p2>=100?'var(--accent)':p2>=70?'var(--amber)':'var(--coral)';
-        const winRate=s.live+s.closed>0?Math.round(s.live/(s.live+s.closed)*100):0;
-        const avgDeal=s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—';
-        const nativeTarget=toNative(target,key);
-        const nativeTargetFmt=nativeTarget>=1e6?cfg.cur+' '+(nativeTarget/1e6).toFixed(1)+'M':cfg.cur+' '+Math.round(nativeTarget/1e3)+'K';
-        const isEditing=!!window._lmTargetEditing[key];
         return`
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-            <!-- Header -->
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text)">${cfg.full}</div>
-                <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:2px">${s.ids.length} projects · ${cfg.cur}</div>
-              </div>
-              ${forecastPie(s.secured,s.weightedForecast,target,100)}
+            <div style="margin-bottom:12px">
+              <div style="font-size:13px;font-weight:600;color:var(--text)">${cfg.full}</div>
+              <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:2px">${s.ids.length} projects · ${cfg.cur}</div>
             </div>
-            <!-- Pie legend -->
-            <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-              <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3);display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:var(--teal);display:inline-block"></span>Secured ${fmLM(s.secured,key)}</span>
-              <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3);display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:var(--purple);display:inline-block"></span>Forecast ${fmLM(s.weightedForecast,key)}</span>
-              <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3);display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:var(--border);display:inline-block"></span>Target ${nativeTargetFmt}</span>
-            </div>
-            <!-- Funnel -->
-            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-bottom:10px">
-              ${[['L',s.leads+s.contacted,'var(--text3)','Leads'],['O',s.opps,'var(--blue)','Opps'],['P',s.proposals,'var(--purple)','Props'],['N',s.negotiation,'var(--amber)','Neg.'],['✓',s.live,'var(--accent)','Live'],['✗',s.closed,'var(--coral)','Lost']].map(([l,n,c,tt])=>`
-                <div title="${tt}" style="text-align:center;background:var(--bg3);border-radius:4px;padding:5px 2px">
-                  <div style="font-size:14px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
-                  <div style="font-size:8px;color:var(--text3)">${l}</div>
-                </div>`).join('')}
-            </div>
-            <!-- Win rate / avg deal / secured -->
-            <div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:10px">
-              <div style="text-align:center">
-                <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
-                <div style="font-size:9px;color:var(--text3)">Win rate</div>
-              </div>
-              <div style="text-align:center">
-                <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--text)">${avgDeal}</div>
-                <div style="font-size:9px;color:var(--text3)">Avg deal</div>
-              </div>
-              <div style="text-align:center">
-                <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--teal)">${fmLM(s.secured,key)}</div>
-                <div style="font-size:9px;color:var(--text3)">Secured</div>
-              </div>
-            </div>
-            <!-- Target edit -->
-            ${isEditing?`
-              <div style="display:flex;align-items:center;gap:6px">
-                <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3);flex-shrink:0">${cfg.cur} Target</span>
-                <input id="tgt-${key.replace(/[\s.]/g,'_')}" type="number"
-                  value="${Math.round(nativeTarget/1000)}"
-                  style="flex:1;padding:4px 8px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--accent);border-radius:5px;color:var(--text);min-width:0"/>
-                <span style="font-size:9.5px;font-family:var(--fm);color:var(--text3)">K</span>
-                <button onclick="(()=>{const v=parseFloat(document.getElementById('tgt-${key.replace(/[\s.]/g,'_')}').value)||0;window._lmTargets['${key}']=v*1000/${FX[cfg.fx]||1};window._lmTargetEditing['${key}']=false;renderSalesDashboard()})()"
-                  style="padding:4px 10px;background:var(--accent);color:#1a1a1a;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>
-                <button onclick="window._lmTargetEditing['${key}']=false;renderSalesDashboard()"
-                  style="padding:4px 8px;background:transparent;color:var(--text3);border:1px solid var(--border);border-radius:5px;font-size:11px;cursor:pointer">✕</button>
-              </div>`:`
-              <div style="display:flex;align-items:center;justify-content:space-between">
-                <span style="font-size:10px;font-family:var(--fm);color:var(--text3)">Target: <strong style="color:var(--text)">${nativeTargetFmt}</strong></span>
-                <button onclick="window._lmTargetEditing['${key}']=true;renderSalesDashboard()"
-                  style="padding:3px 10px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">✎ Edit</button>
-              </div>`}
+            ${lmCardBody(key, true)}
           </div>`;
       }).join('')}
       </div>`;
 
-    // Pie charts
-    const pieSlicesSecured=lmKeys.map((k,i)=>({val:lmStats[k].secured,label:LM_CONFIG[k].full,color:LM_COLORS[i],display:fmGBP(lmStats[k].secured)}));
+    // Donut pies for team view
+    const pieSlicesWon=lmKeys.map((k,i)=>({val:lmStats[k].won,label:LM_CONFIG[k].full,color:LM_COLORS[i],display:fmGBP(lmStats[k].won)}));
     const pieSlicesForecast=lmKeys.map((k,i)=>({val:lmStats[k].weightedForecast,label:LM_CONFIG[k].full,color:LM_COLORS[i],display:fmGBP(lmStats[k].weightedForecast)}));
     const pieHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-        ${[['Secured Revenue by LM',pieSlicesSecured],['Weighted Forecast by LM',pieSlicesForecast]].map(([title,slices])=>`
+        ${[['Won Revenue by LM',pieSlicesWon],['Weighted Forecast by LM',pieSlicesForecast]].map(([title,slices])=>`
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
             <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">${title}</div>
             <div style="display:flex;align-items:center;gap:16px">
@@ -3364,7 +3369,7 @@ function renderSalesDashboard(){
           </div>`).join('')}
       </div>`;
 
-    // Stage + Forecast
+    // Stage + Forecast summary
     const stageOrder=['New Lead','Att. to contact','Contacted','Information Pending','Qualified','In Assessment','Proposal','Negotiation','Live','Closed Lead'];
     const stageColors={'New Lead':'var(--text3)','Att. to contact':'var(--blue)','Contacted':'var(--blue)',
       'Information Pending':'var(--blue)','Qualified':'var(--accent2)','In Assessment':'var(--accent2)',
@@ -3380,7 +3385,7 @@ function renderSalesDashboard(){
       stageFees[stage]=(stageFees[stage]||0)+feeGBP;
     });
     const maxCnt=Math.max(1,...stageOrder.map(s=>stageCount[s]||0));
-    const hotPipeline=lmKeys.reduce((s,k)=>s+lmStats[k].weightedForecast,0)-totalSecured;
+    const hotPipeline=Math.max(0,totalWeighted-totalWon);
 
     const stageHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -3400,8 +3405,8 @@ function renderSalesDashboard(){
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
           <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Forecast Summary</div>
           ${[
-            ['Secured (Live)','var(--teal)',totalSecured,'Live projects · 100% probability'],
-            ['Hot Pipeline','var(--purple)',Math.max(0,hotPipeline),'Weighted excl. secured'],
+            ['Won (Live)','var(--teal)',totalWon,'Live projects · 100% probability'],
+            ['Hot Pipeline','var(--purple)',hotPipeline,'Weighted excl. won'],
             ['Total Weighted','var(--accent)',totalWeighted,'All active stages combined'],
             ['FY2026 Target','var(--text3)',totalTarget,'Combined team target'],
           ].map(([l,c,v,s])=>`
@@ -3446,10 +3451,10 @@ function renderSalesDashboard(){
     const myKpiHTML=`
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
         ${[
-          ['My Pipeline',fmLM(s.weightedForecast+s.secured,key),'weighted + secured','var(--text)'],
-          ['Secured',fmLM(s.secured,key),'live in delivery','var(--teal)'],
+          ['My Pipeline',fmLM(s.weightedForecast+s.won,key),'weighted + won','var(--text)'],
+          ['Won',fmLM(s.won,key),'live in delivery','var(--teal)'],
           ['My Target',fmLM(target,key),'FY2026','var(--text)'],
-          ['Achievement',p2+'%','vs target',color],
+          ['Achievement',p2+'%','weighted forecast vs target',color],
         ].map(([l,v,sub,c])=>`
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
             <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">${l}</div>
@@ -3476,55 +3481,47 @@ function renderSalesDashboard(){
     const myMax=Math.max(1,...stOrder.map(s2=>myStageCount[s2]||0));
 
     const myMainHTML=`
-      <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;margin-bottom:16px">
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:8px;min-width:180px">
-          <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase">Forecast vs Target</div>
-          ${forecastPie(s.secured,s.weightedForecast,target,140)}
-          <div style="display:flex;flex-direction:column;gap:4px;width:100%">
-            ${[['var(--teal)','Secured',fmLM(s.secured,key)],['var(--purple)','Forecast',fmLM(s.weightedForecast,key)],['var(--border)','Target',fmLM(target,key)]].map(([c,l,v])=>`
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-                <span style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text3)"><span style="width:8px;height:8px;border-radius:2px;background:${c}"></span>${l}</span>
-                <span style="font-size:10px;font-weight:600;font-family:var(--fm);color:var(--text)">${v}</span>
-              </div>`).join('')}
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <!-- Funnel -->
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-            <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">My Funnel</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+        <!-- Left: bullet bars + funnel + stats -->
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
+          <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:14px">Performance vs Target</div>
+          ${bulletBar(s.won,s.weightedForecast,target,key,'Won','Forecast')}
+          <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
             <div style="display:flex;align-items:center;justify-content:space-between">
-              ${[['Leads',s.leads+s.contacted,'var(--text3)'],['Opps',s.opps,'var(--blue)'],['Props',s.proposals,'var(--purple)'],['Neg.',s.negotiation,'var(--amber)'],['Live',s.live,'var(--accent)'],['Closed',s.closed,'var(--coral)']].map(([l,n,c],i,arr)=>`
+              ${[['Leads',s.leads+s.contacted,'var(--text3)'],['Opps',s.opps,'var(--blue)'],['Props',s.proposals,'var(--purple)'],['Neg.',s.negotiation,'var(--amber)'],['Won',s.live,'var(--accent)'],['Lost',s.closed,'var(--coral)']].map(([l,n,c],i,arr)=>`
                 <div style="text-align:center">
-                  <div style="font-size:24px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
-                  <div style="font-size:9.5px;color:var(--text3);margin-top:2px">${l}</div>
-                </div>${i<arr.length-1?'<div style="color:var(--border2);font-size:16px;padding-bottom:12px">›</div>':''}`).join('')}
+                  <div style="font-size:22px;font-weight:700;font-family:var(--fm);color:${c}">${n}</div>
+                  <div style="font-size:9px;color:var(--text3);margin-top:2px">${l}</div>
+                </div>${i<arr.length-1?'<div style="color:var(--border2);font-size:14px;padding-bottom:10px">›</div>':''}`).join('')}
             </div>
           </div>
-          <!-- Stats -->
+        </div>
+        <!-- Right: win rate + avg deal -->
+        <div style="display:flex;flex-direction:column;gap:10px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-align:center">
-              <div style="font-size:24px;font-weight:700;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
+              <div style="font-size:28px;font-weight:700;font-family:var(--fm);color:var(--accent)">${winRate}%</div>
               <div style="font-size:10px;color:var(--text3);margin-top:4px">Win rate</div>
             </div>
             <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;text-align:center">
-              <div style="font-size:20px;font-weight:700;font-family:var(--fm);color:var(--text)">${s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—'}</div>
+              <div style="font-size:22px;font-weight:700;font-family:var(--fm);color:var(--text)">${s.ids.length>0?fmLM(s.totalFeeGBP/s.ids.length,key):'—'}</div>
               <div style="font-size:10px;color:var(--text3);margin-top:4px">Avg deal size</div>
             </div>
           </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;flex:1">
+            <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">My Pipeline by Stage</div>
+            ${stOrder.filter(s2=>myStageCount[s2]).map(s2=>`
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <div style="width:110px;font-size:10px;color:var(--text2);text-align:right;flex-shrink:0">${s2}</div>
+                <div style="flex:1;height:16px;background:var(--bg3);border-radius:3px;overflow:hidden">
+                  <div style="height:100%;width:${Math.round((myStageCount[s2]||0)/myMax*90)}%;background:${stColors[s2]||'#888'};border-radius:3px;display:flex;align-items:center;padding-left:5px">
+                    <span style="font-size:10px;font-family:var(--fm);font-weight:600;color:#fff">${myStageCount[s2]}</span>
+                  </div>
+                </div>
+                <div style="width:80px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right">${fmLM(myStageFees[s2]||0,key)}</div>
+              </div>`).join('')}
+          </div>
         </div>
-      </div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px">
-        <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">My Pipeline by Stage</div>
-        ${stOrder.filter(s2=>myStageCount[s2]).map(s2=>`
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-            <div style="width:140px;font-size:11px;color:var(--text2);text-align:right;flex-shrink:0">${s2}</div>
-            <div style="flex:1;height:18px;background:var(--bg3);border-radius:3px;overflow:hidden">
-              <div style="height:100%;width:${Math.round((myStageCount[s2]||0)/myMax*90)}%;background:${stColors[s2]||'#888'};border-radius:3px;display:flex;align-items:center;padding-left:6px">
-                <span style="font-size:10px;font-family:var(--fm);font-weight:600;color:#fff">${myStageCount[s2]}</span>
-              </div>
-            </div>
-            <div style="width:90px;font-size:10px;font-family:var(--fm);color:var(--text3);text-align:right">${fmLM(myStageFees[s2]||0,key)}</div>
-          </div>`).join('')}
       </div>`;
 
     el.innerHTML=dateFilterHTML+myKpiHTML+myMainHTML;
