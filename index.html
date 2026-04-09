@@ -1326,10 +1326,7 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     const _uname=currentProfile?.name||'';
     const _ulmgr=currentProfile?.initials||'';
     if(_aedUsers.some(n=>_uname.includes(n.split(' ')[1])||_uname===n)){
-      curCode='AED';
-      document.querySelectorAll('.cbtn').forEach(b=>{
-        b.classList.toggle('on',b.textContent==='AED');
-      });
+      setCur('AED',null);
     }
     try{
       const loaded=await loadFromSupabase();
@@ -4120,7 +4117,8 @@ function setCur(code,btn){
   curCode=code;
   if(currentId)getPS(currentId).currency=code;
   document.querySelectorAll('.cbtn').forEach(b=>b.classList.remove('on'));
-  btn.classList.add('on');
+  if(btn) btn.classList.add('on');
+  else document.querySelectorAll('.cbtn').forEach(b=>{if(b.textContent===code)b.classList.add('on');});
   updateKPIs();
   if(currentId)rebuildFee(currentId);
   Object.keys(PROJECTS).forEach(id=>updateCardFeeTags(id));
