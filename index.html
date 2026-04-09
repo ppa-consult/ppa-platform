@@ -1374,8 +1374,9 @@ function openDeadlinesModal(type){
     const ddlFmt=ddlDate.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
     const dayColor=daysAway<0?'var(--coral)':daysAway<=14?'var(--amber)':'var(--text2)';
     const dayLabel=daysAway<0?Math.abs(daysAway)+'d overdue':daysAway+'d';
+    const safeId=id;
     return`<tr style="border-bottom:1px solid var(--border);cursor:pointer"
-      onclick="closeModal();switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+'${id}');if(c){c.scrollIntoView({behavior:'smooth',block:'nearest'});}loadProject('${id}',c);},400)"
+      onclick="closeModal();switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${safeId}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${safeId}',c);},400)"
       onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
       <td style="padding:8px 12px;font-size:10px;font-family:var(--fm);color:var(--text3)">${p.ref||'—'}</td>
       <td style="padding:8px 12px;font-size:12px;color:var(--text);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name||'—'}</td>
@@ -1391,15 +1392,12 @@ function openDeadlinesModal(type){
 
   document.getElementById('mt').innerHTML=`<span style="color:${titleColor}">${title}</span>`;
   document.getElementById('mb').innerHTML='';
-  document.getElementById('macts').innerHTML='';
+  document.getElementById('ma').innerHTML='<button onclick="closeModal()" style="padding:6px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);cursor:pointer;font-size:12px">Close</button>';
 
   // Replace modal body with table
   const modalBox=document.getElementById('modal-box');
   const existingContent=modalBox.querySelector('.modal-table-wrap');
   if(existingContent) existingContent.remove();
-  // Also clear mb and ma
-  document.getElementById('mb').innerHTML='';
-  document.getElementById('ma').innerHTML='<button onclick="closeModal()" style="padding:6px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);cursor:pointer;font-size:12px">Close</button>';
 
   const tableWrap=document.createElement('div');
   tableWrap.className='modal-table-wrap';
@@ -3352,7 +3350,7 @@ function renderSalesDashboard(){
       const ddl=p.ddl?new Date(p.ddl).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'}):'—';
       const daysAway=p.ddl?Math.round((new Date(p.ddl)-now)/(1000*60*60*24)):null;
       const ddlColor=daysAway!==null?(daysAway<0?'var(--coral)':daysAway<14?'var(--amber)':'var(--text3)'):'var(--text3)';
-      return`<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+\'${id}\');loadProject(\'${id}\',c);},400)" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+      return`<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
         <td style="padding:6px 10px;font-size:10px;font-family:var(--fm);color:var(--text3);white-space:nowrap">${p.ref||'—'}</td>
         <td style="padding:6px 10px;font-size:11px;color:var(--text);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.name||''}">${p.name||'Unnamed'}</td>
         ${showLM?`<td style="padding:6px 10px;font-size:10px;color:var(--text2);white-space:nowrap">${p.lmgr||'—'}</td>`:''}
@@ -3593,7 +3591,7 @@ function renderSalesDashboard(){
             </div>
           </div>
           ${overdue.slice(0,2).map(({id,daysAway,p,pipe})=>`
-            <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+'${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
+            <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
               style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;margin-bottom:4px;background:rgba(240,90,79,.08);border:1px solid rgba(240,90,79,.2);border-radius:5px;cursor:pointer">
               <div style="min-width:0">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name||'—'}</div>
@@ -3604,7 +3602,7 @@ function renderSalesDashboard(){
               </div>
             </div>`).join('')}
           ${upcoming.slice(0,5-Math.min(2,overdue.length)).map(({id,daysAway,p,pipe})=>`
-            <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+'${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
+            <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
               style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;margin-bottom:4px;background:var(--bg3);border-radius:5px;cursor:pointer" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
               <div style="min-width:0">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name||'—'}</div>
@@ -3744,13 +3742,13 @@ function renderSalesDashboard(){
               ${myOverdue.length>0?`<span style="margin-left:6px;background:var(--coral);color:#fff;font-size:8px;padding:1px 5px;border-radius:8px">${myOverdue.length} overdue</span>`:''}
             </div>
             ${myOverdue.map(({id,daysAway,p,pipe})=>`
-              <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+\'${id}\');loadProject(\'${id}\',c);},400)"
+              <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
                 style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;margin-bottom:4px;background:rgba(240,90,79,.08);border:1px solid rgba(240,90,79,.2);border-radius:5px;cursor:pointer">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${p.name||'—'}</div>
                 <div style="font-size:10px;font-weight:700;color:var(--coral);flex-shrink:0;margin-left:8px">${Math.abs(daysAway)}d overdue</div>
               </div>`).join('')}
             ${myUpcoming.slice(0,4).map(({id,daysAway,p})=>`
-              <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-'+\'${id}\');loadProject(\'${id}\',c);},400)"
+              <div onclick="switchView('pipeline');setTimeout(()=>{const c=document.getElementById('card-${id}');if(c)c.scrollIntoView({behavior:'smooth',block:'nearest'});loadProject('${id}',c);},400)"
                 style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;margin-bottom:4px;background:var(--bg3);border-radius:5px;cursor:pointer" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${p.name||'—'}</div>
                 <div style="font-size:10px;font-weight:700;color:${daysAway<=14?'var(--amber)':'var(--text2)'};flex-shrink:0;margin-left:8px">${daysAway}d</div>
