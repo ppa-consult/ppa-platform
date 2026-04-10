@@ -1321,6 +1321,9 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     try{currentProfile=await loadProfile(user);}catch(e){currentProfile=null;}
     updateUserBadge(currentProfile,user);
     document.getElementById('auth-screen').style.display='none';
+    // Show currency switcher only for owner role
+    const _cs=document.getElementById('currency-switcher');
+    if(_cs) _cs.style.display=currentProfile?.role==='owner'?'flex':'none';
     // Set default currency based on user
     const _aedUsers=['T. Ryan','J. Fox','Tom Ryan','Jeff Fox'];
     const _uname=currentProfile?.name||'';
@@ -4124,6 +4127,7 @@ function setCur(code,btn){
   Object.keys(PROJECTS).forEach(id=>updateCardFeeTags(id));
   updateFeeHint();
   if(currentView==='dash')renderSalesDashboard();
+  if(['leads','opps','props'].includes(currentView))renderListView(currentView);
 }
 
 function updateCardFeeTags(id){
