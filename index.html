@@ -951,7 +951,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
 // ══ SUPABASE CONFIG ════════════════════════════════════════════
 const SUPA_URL  = 'https://heoempnplwoaupfmidoo.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhlb2VtcG5wbHdvYXVwZm1pZG9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxODY2MjYsImV4cCI6MjA5MDc2MjYyNn0.TcHE06eFM8-xoIu-LPFJIvTss08xnX_Alf4z21M2JK0';
-const supa = supabase.createClient(SUPA_URL, SUPA_ANON);
+// Explicit storage — bypasses Supabase's o() writability check which silently fails on some hosts
+const _ppaStorage = {
+  getItem: (key) => { try { return localStorage.getItem(key); } catch(e) { return null; } },
+  setItem: (key, val) => { try { localStorage.setItem(key, val); } catch(e) { console.warn('[STORAGE] setItem failed:', e); } },
+  removeItem: (key) => { try { localStorage.removeItem(key); } catch(e) {} },
+};
+const supa = supabase.createClient(SUPA_URL, SUPA_ANON, {
+  auth: { storage: _ppaStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+});
 
 // ══ SYNC STATE ═════════════════════════════════════════════════
 let _syncEnabled = false;   // flips true after initial load
