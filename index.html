@@ -1340,9 +1340,17 @@ async function showUserMenu(){
 
 async function signOut(){
   stopRealtime();
+  // Close user menu if open
+  const menu=document.getElementById('user-menu');
+  if(menu) menu.style.display='none';
   await supa.auth.signOut();
   try{const keys=Object.keys(localStorage).filter(k=>k.startsWith('sb-'));keys.forEach(k=>localStorage.removeItem(k));}catch(e){}
   currentUser=null; currentProfile=null;
+  // Reset auth form to clean state
+  const authBtn=document.getElementById('auth-btn');
+  if(authBtn){authBtn.disabled=false;authBtn.textContent='Sign in';}
+  const authErr=document.getElementById('auth-err');
+  if(authErr)authErr.style.display='none';
   document.getElementById('auth-screen').style.display='flex';
   Object.keys(PROJECTS).forEach(k=>delete PROJECTS[k]);
   Object.keys(PIPE).forEach(k=>delete PIPE[k]);
