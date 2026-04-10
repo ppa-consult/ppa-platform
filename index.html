@@ -1439,9 +1439,21 @@ supa.auth.onAuthStateChange(async(event,session)=>{
       }
       await _handleAuthUser(data.user);
     } else {
-      // Token still valid — restore session directly
-      await supa.auth.setSession({ access_token: stored.access_token, refresh_token: stored.refresh_token });
-      await _handleAuthUser(stored.user);
+      // Token still valid — restore session then verify with getSession
+      const { data: sd, error: se } = await supa.auth.setSession({ 
+        access_token: stored.access_token, 
+        refresh_token: stored.refresh_token 
+      });
+      console.log('%cAUTH%c [startup] setSession result:', 
+        'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
+        sd?.user?.email || 'no user', se || 'no error');
+      if(sd?.user) {
+        await _handleAuthUser(sd.user);
+      } else {
+        // setSession failed — try getSession as last resort
+        const { data: gd } = await supa.auth.getSession();
+        if(gd?.session?.user) await _handleAuthUser(gd.session.user);
+      }
     }
   } catch(e) {
     console.error('[AUTH startup] Failed to restore session:', e);
