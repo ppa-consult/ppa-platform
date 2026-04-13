@@ -1389,9 +1389,7 @@ async function _handleAuthUser(user) {
     const {data} = await supa.from('profiles').select('*').eq('id', user.id).single();
     currentProfile = data || null;
   } catch(e) { currentProfile = null; }
-
-  console.log('%cAUTH%c [_handleAuthUser] profile:', 
-    'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
     currentProfile?.name || 'null');
 
   updateUserBadge(currentProfile, user);
@@ -1430,24 +1428,20 @@ supa.auth.onAuthStateChange(async(event,session)=>{
     // Find the sb- auth token key
     const sbKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
     if(!sbKey) {
-      console.log('%cAUTH%c [startup] No session token in localStorage', 
-        'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit');
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit');
       return;
     }
     const stored = JSON.parse(localStorage.getItem(sbKey));
-    console.log('%cAUTH%c [startup] Found stored session:', 
-      'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
       { user: stored?.user?.email, expires_at: stored?.expires_at });
     if(!stored?.user) return;
     // Check if token is expired
     const now = Math.round(Date.now()/1000);
     if(stored.expires_at && stored.expires_at < now) {
-      console.log('%cAUTH%c [startup] Token expired — attempting refresh', 
-        'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit');
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit');
       const { data, error } = await supa.auth.refreshSession({ refresh_token: stored.refresh_token });
       if(error || !data?.user) {
-        console.log('%cAUTH%c [startup] Refresh failed:', 
-          'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit', error);
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit', error);
         return;
       }
       await _handleAuthUser(data.user);
@@ -1459,9 +1453,7 @@ supa.auth.onAuthStateChange(async(event,session)=>{
       // Instead manually inject the token into the REST client and load directly
       const accessToken = stored.access_token;
       const refreshToken = stored.refresh_token;
-      
-      console.log('%cAUTH%c [startup] Restoring session manually', 
-        'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
+color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
         stored.user?.email);
 
       // Manually set auth headers on the REST client
@@ -3870,19 +3862,22 @@ function renderSalesDashboard(){
               <div style="font-size:10px;color:var(--text3);margin-top:4px">Avg deal size</div>
             </div>
           </div>
-          <!-- My upcoming deadlines -->
+          <!-- My upcoming deadlines — capped at 5, view all modal -->
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;flex:1">
-            <div style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">
-              Upcoming Deadlines
-              ${myOverdue.length>0?`<span style="margin-left:6px;background:var(--coral);color:#fff;font-size:8px;padding:1px 5px;border-radius:8px">${myOverdue.length} overdue</span>`:''}
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:1px;text-transform:uppercase;font-weight:600">Upcoming Deadlines</span>
+              <div style="display:flex;gap:5px;align-items:center">
+                ${myOverdue.length>0?`<span onclick="openDeadlinesModal('overdue')" style="background:var(--coral);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;cursor:pointer">${myOverdue.length} overdue</span>`:''}
+                ${myUpcoming.length>4?`<span onclick="openDeadlinesModal('upcoming')" style="background:var(--bg4);color:var(--text3);font-size:9px;padding:2px 7px;border-radius:8px;cursor:pointer;border:1px solid var(--border)">View all ${myUpcoming.length}</span>`:''}
+              </div>
             </div>
-            ${myOverdue.map(({id,daysAway,p,pipe})=>`
+            ${myOverdue.slice(0,2).map(({id,daysAway,p})=>`
               <div onclick="switchView('pipeline');setTimeout(()=>{loadProject('${id}',null);setTimeout(()=>{const dp=document.getElementById('detail-panel');if(dp)dp.scrollIntoView({behavior:'smooth',block:'start'});},150);},400)"
                 style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;margin-bottom:4px;background:rgba(240,90,79,.08);border:1px solid rgba(240,90,79,.2);border-radius:5px;cursor:pointer">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${p.name||'—'}</div>
                 <div style="font-size:10px;font-weight:700;color:var(--coral);flex-shrink:0;margin-left:8px">${Math.abs(daysAway)}d overdue</div>
               </div>`).join('')}
-            ${myUpcoming.slice(0,4).map(({id,daysAway,p})=>`
+            ${myUpcoming.slice(0,5-Math.min(2,myOverdue.length)).map(({id,daysAway,p})=>`
               <div onclick="switchView('pipeline');setTimeout(()=>{loadProject('${id}',null);setTimeout(()=>{const dp=document.getElementById('detail-panel');if(dp)dp.scrollIntoView({behavior:'smooth',block:'start'});},150);},400)"
                 style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;margin-bottom:4px;background:var(--bg3);border-radius:5px;cursor:pointer" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
                 <div style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${p.name||'—'}</div>
@@ -7405,190 +7400,6 @@ function submitNewLead(){
 
 <div id="kpi-tip"></div>
 
-<script>
-// ══ PPA DEBUG MONITOR ════════════════════════════════════
-const _dbg = (tag, msg, data) => {
-  const ts = new Date().toISOString().slice(11,23);
-  const style = {
-    'AUTH':    'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700',
-    'LOAD':    'background:#1a1a3a;color:#6699ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'SAVE':    'background:#2a1a00;color:#ffaa00;padding:2px 6px;border-radius:3px;font-weight:700',
-    'NAV':     'background:#1a1a2a;color:#aa88ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'STAGE':   'background:#2a0a00;color:#ff7744;padding:2px 6px;border-radius:3px;font-weight:700',
-    'SYNC':    'background:#002a2a;color:#44cccc;padding:2px 6px;border-radius:3px;font-weight:700',
-    'DASH':    'background:#1a002a;color:#cc44ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'MODAL':   'background:#2a1a2a;color:#ff88cc;padding:2px 6px;border-radius:3px;font-weight:700',
-    'ERROR':   'background:#3a0000;color:#ff4444;padding:2px 6px;border-radius:3px;font-weight:700',
-    'INFO':    'background:#111;color:#888;padding:2px 6px;border-radius:3px;font-weight:700',
-  }[tag] || 'background:#222;color:#aaa;padding:2px 6px;border-radius:3px;font-weight:700';
-  if(data !== undefined) {
-    console.log(`%c${tag}%c [${ts}] ${msg}`, style, 'color:inherit', data);
-  } else {
-    console.log(`%c${tag}%c [${ts}] ${msg}`, style, 'color:inherit');
-  }
-};
 
-// ── Patch auth state changes ──────────────────────────────
-const _origOnAuthStateChange = supa.auth.onAuthStateChange.bind(supa.auth);
-supa.auth.onAuthStateChange = (cb) => {
-  return _origOnAuthStateChange(async (event, session) => {
-    _dbg('AUTH', `onAuthStateChange → ${event}`, session ? { user: session.user?.email, expires_at: session.expires_at } : null);
-    await cb(event, session);
-  });
-};
-
-// ── Patch Supabase DB calls ───────────────────────────────
-const _origFrom = supa.from.bind(supa);
-supa.from = (table) => {
-  const builder = _origFrom(table);
-  const _origSelect = builder.select.bind(builder);
-  builder.select = (...args) => {
-    const q = _origSelect(...args);
-    const _origThen = q.then.bind(q);
-    q.then = (resolve, reject) => {
-      _dbg('LOAD', `SELECT from "${table}"`);
-      return _origThen(result => {
-        if(result?.error) _dbg('ERROR', `SELECT "${table}" failed`, result.error);
-        else _dbg('LOAD', `SELECT "${table}" → ${result?.data?.length ?? 0} rows`);
-        resolve && resolve(result);
-      }, reject);
-    };
-    return q;
-  };
-  return builder;
-};
-
-// ── Patch switchView ──────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof switchView === 'function') {
-    const _origSV = switchView;
-    window.switchView = (view) => {
-      _dbg('NAV', `switchView → ${view}`);
-      _origSV(view);
-    };
-  }
-});
-
-// ── Patch loadProject ─────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof loadProject === 'function') {
-    const _origLP = loadProject;
-    window.loadProject = (id, cardEl) => {
-      const p = PROJECTS[id];
-      _dbg('NAV', `loadProject → ${id} (${p?.name || 'unknown'})`);
-      _origLP(id, cardEl);
-    };
-  }
-});
-
-// ── Patch setCur ──────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof setCur === 'function') {
-    const _origSC = setCur;
-    window.setCur = (code, btn) => {
-      _dbg('INFO', `setCur → ${code}`);
-      _origSC(code, btn);
-    };
-  }
-});
-
-// ── Patch renderSalesDashboard ────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof renderSalesDashboard === 'function') {
-    const _origRSD = renderSalesDashboard;
-    window.renderSalesDashboard = () => {
-      _dbg('DASH', 'renderSalesDashboard()');
-      _origRSD();
-    };
-  }
-});
-
-// ── Patch openDeadlinesModal ──────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof openDeadlinesModal === 'function') {
-    const _origODM = openDeadlinesModal;
-    window.openDeadlinesModal = (type) => {
-      _dbg('MODAL', `openDeadlinesModal → ${type}`);
-      _origODM(type);
-    };
-  }
-});
-
-// ── Patch signOut ─────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof signOut === 'function') {
-    const _origSO = signOut;
-    window.signOut = async () => {
-      _dbg('AUTH', 'signOut() called');
-      await _origSO();
-      _dbg('AUTH', 'signOut() complete');
-    };
-  }
-});
-
-// ── Patch loadFromSupabase ────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof loadFromSupabase === 'function') {
-    const _origLFS = loadFromSupabase;
-    window.loadFromSupabase = async () => {
-      _dbg('SYNC', 'loadFromSupabase() start');
-      const t0 = performance.now();
-      const result = await _origLFS();
-      const elapsed = Math.round(performance.now() - t0);
-      _dbg('SYNC', `loadFromSupabase() done in ${elapsed}ms — success: ${result}`);
-      return result;
-    };
-  }
-});
-
-// ── Patch saveProjectToSupabase ───────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof saveProjectToSupabase === 'function') {
-    const _origSPS = saveProjectToSupabase;
-    window.saveProjectToSupabase = (id) => {
-      const p = PROJECTS[id];
-      _dbg('SAVE', `saveProjectToSupabase → ${id} (${p?.name || 'unknown'})`);
-      _origSPS(id);
-    };
-  }
-});
-
-// ── Patch logStageChange ──────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof logStageChange === 'function') {
-    const _origLSC = logStageChange;
-    window.logStageChange = (id, stage) => {
-      const p = PROJECTS[id];
-      _dbg('STAGE', `logStageChange → ${id} (${p?.name || 'unknown'}) → ${stage}`);
-      _origLSC(id, stage);
-    };
-  }
-});
-
-// ── Patch syncAllToSupabase ───────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if(typeof syncAllToSupabase === 'function') {
-    const _origSATS = syncAllToSupabase;
-    window.syncAllToSupabase = async () => {
-      _dbg('SYNC', `syncAllToSupabase() — ${Object.keys(PROJECTS).length} projects`);
-      await _origSATS();
-      _dbg('SYNC', 'syncAllToSupabase() complete');
-    };
-  }
-});
-
-// ── Global error catcher ──────────────────────────────────
-window.addEventListener('error', (e) => {
-  _dbg('ERROR', `Uncaught: ${e.message}`, { file: e.filename, line: e.lineno, col: e.colno });
-});
-window.addEventListener('unhandledrejection', (e) => {
-  _dbg('ERROR', `Unhandled promise rejection: ${e.reason?.message || e.reason}`);
-});
-
-// ── Startup banner ────────────────────────────────────────
-console.log('%c PPa Platform Debug Monitor Active ', 'background:#8dc63f;color:#1a1a1a;font-size:13px;font-weight:900;padding:6px 12px;border-radius:4px');
-console.log('%c All auth, load, save, nav, stage and sync events will be logged above.', 'color:#666;font-size:11px');
-_dbg('INFO', `Page loaded — ${new Date().toLocaleString('en-GB')}`);
-</script>
 </body>
 </html>
