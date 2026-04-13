@@ -7401,37 +7401,5 @@ function submitNewLead(){
 <div id="kpi-tip"></div>
 
 
-
-<script>
-// ══ PPA DEBUG MONITOR ════════════════════════════════════
-const _dbg = (tag, msg, data) => {
-  const ts = new Date().toISOString().slice(11,23);
-  const style = {
-    'AUTH':    'background:#1a3a1a;color:#8dc63f;padding:2px 6px;border-radius:3px;font-weight:700',
-    'LOAD':    'background:#1a1a3a;color:#6699ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'SAVE':    'background:#2a1a00;color:#ffaa00;padding:2px 6px;border-radius:3px;font-weight:700',
-    'NAV':     'background:#1a1a2a;color:#aa88ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'STAGE':   'background:#2a0a00;color:#ff7744;padding:2px 6px;border-radius:3px;font-weight:700',
-    'SYNC':    'background:#002a2a;color:#44cccc;padding:2px 6px;border-radius:3px;font-weight:700',
-    'DASH':    'background:#1a002a;color:#cc44ff;padding:2px 6px;border-radius:3px;font-weight:700',
-    'MODAL':   'background:#2a1a2a;color:#ff88cc;padding:2px 6px;border-radius:3px;font-weight:700',
-    'ERROR':   'background:#3a0000;color:#ff4444;padding:2px 6px;border-radius:3px;font-weight:700',
-    'INFO':    'background:#111;color:#888;padding:2px 6px;border-radius:3px;font-weight:700',
-  }[tag] || 'background:#222;color:#aaa;padding:2px 6px;border-radius:3px;font-weight:700';
-  if(data !== undefined) {
-    console.log(`%c${tag}%c [${ts}] ${msg}`, style, 'color:inherit', data);
-  } else {
-    console.log(`%c${tag}%c [${ts}] ${msg}`, style, 'color:inherit');
-  }
-};
-window.addEventListener('error', (e) => {
-  _dbg('ERROR', `Uncaught: ${e.message}`, { file: e.filename, line: e.lineno, col: e.colno });
-});
-window.addEventListener('unhandledrejection', (e) => {
-  _dbg('ERROR', `Unhandled promise rejection: ${e.reason?.message || e.reason}`);
-});
-console.log('%c PPa Platform v44 ', 'background:#8dc63f;color:#1a1a1a;font-size:13px;font-weight:900;padding:6px 12px;border-radius:4px');
-_dbg('INFO', `Page loaded — ${new Date().toLocaleString('en-GB')}`);
-</script>
 </body>
 </html>
