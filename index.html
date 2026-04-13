@@ -1155,6 +1155,13 @@ async function saveProjectToSupabase(id){
 
 // ══ LOAD ALL FROM DB ══════════════════════════════════════════
 async function loadFromSupabase(){
+  // Debug: check if we have a valid session before loading
+  try {
+    const {data:{session}} = await supa.auth.getSession();
+    console.log('%cSYNC%c [loadFromSupabase] auth check:', 
+      'background:#002a2a;color:#44cccc;padding:2px 6px;border-radius:3px;font-weight:700','color:inherit',
+      session ? `token ok, user: ${session.user?.email}` : 'NO SESSION - queries will fail');
+  } catch(e) { console.warn('[loadFromSupabase] auth check failed:', e); }
   _realtimeUpdating = false; // ensure clean state on load
   setSyncStatus('saving'); // show loading state
   try {
