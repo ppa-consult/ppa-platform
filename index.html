@@ -1446,7 +1446,6 @@ supa.auth.onAuthStateChange(async(event,session)=>{
       // Instead manually inject the token into the REST client and load directly
       const accessToken = stored.access_token;
       const refreshToken = stored.refresh_token;
-        stored.user?.email);
 
       // Manually set auth headers on the REST client
       window._restoredAccessToken = accessToken;
