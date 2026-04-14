@@ -616,6 +616,45 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
   </div>
 </div>
 
+
+<!-- DC PROPOSAL CONFIGURATOR MODAL -->
+<div class="modal-ov" id="cfg-modal" style="display:none" onclick="if(event.target===this)closeCfgModal()">
+  <div id="cfg-box" style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:0;max-width:720px;width:95%;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px var(--sh)">
+
+    <!-- Header -->
+    <div style="padding:18px 24px 14px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">DC Proposal Configurator</div>
+          <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:2px" id="cfg-subtitle">Auto-generate fee estimate from project brief</div>
+        </div>
+        <button onclick="closeCfgModal()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:4px">✕</button>
+      </div>
+      <!-- Step indicator -->
+      <div style="display:flex;gap:0;margin-top:14px">
+        ${[1,2,3,4].map((s,i)=>`
+        <div style="flex:1;position:relative">
+          <div id="cfg-step-ind-${s}" style="height:3px;background:var(--border);border-radius:2px;margin-right:4px;transition:background .3s"></div>
+          <div style="font-size:9px;font-family:var(--fm);color:var(--text3);margin-top:4px;white-space:nowrap">${['Project','Stages','CFD','Review'][i]}</div>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Body (scrollable) -->
+    <div id="cfg-body" style="overflow-y:auto;flex:1;padding:20px 24px"></div>
+
+    <!-- Footer -->
+    <div style="padding:14px 24px;border-top:1px solid var(--border);flex-shrink:0;display:flex;justify-content:space-between;align-items:center">
+      <button id="cfg-back" onclick="cfgBack()" style="padding:7px 18px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:12px;cursor:pointer;display:none">← Back</button>
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeCfgModal()" style="padding:7px 18px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:12px;cursor:pointer">Cancel</button>
+        <button id="cfg-next" onclick="cfgNext()" style="padding:7px 20px;background:var(--accent);color:#1a1a1a;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Next →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- SIDEBAR -->
 <aside class="sb">
   <div class="sb-logo">
@@ -687,6 +726,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
       <input type="file" id="import-file" accept=".csv" style="display:none" onchange="importData(event)">
       <span id="sync-indicator" style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-right:8px">● Offline</span>
       <div class="ttog" onclick="toggleTheme()"><span id="tic">🌙</span><span id="tlbl">Dark</span></div>
+      <button class="btn bg bsm" onclick="openCfgModal('new')" style="border:1px solid var(--accent);color:var(--accent);background:transparent" title="Generate fee estimate from project brief">⚡ Quick Estimate</button>
       <button class="btn bp bsm" onclick="openNLModal()">+ New Lead</button>
     </div>
   </div>
@@ -767,6 +807,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
           <div class="dref" id="dpref">—</div>
         </div>
         <button id="build-fee-btn" class="btn bp bsm" style="display:none" onclick="buildFeeFromHeader()">Build fee calculator →</button>
+        <button id="cfg-estimate-btn" class="btn bg bsm" onclick="openCfgModal('existing',currentId)" style="border:1px solid var(--accent);color:var(--accent);background:transparent;display:none" title="Auto-generate fee estimate from DC matrix">⚡ Fee Estimate</button>
         <button class="btn bp bsm" onclick="saveChanges()">Save</button>
       </div>
 
@@ -1467,7 +1508,19 @@ supa.auth.onAuthStateChange(async(event,session)=>{
 // ══ DEADLINES MODAL ══════════════════════════════════════
 function openDeadlinesModal(type){
   // type = 'overdue' or 'upcoming'
-  const allIds=Object.keys(PROJECTS);
+  // Filter by LM if not owner
+  const isOwner=currentProfile?.role==='owner';
+  const myLmKey=(()=>{
+    const n=(currentProfile?.name||'').toLowerCase();
+    if(n.includes('ryan'))     return 'T. Ryan';
+    if(n.includes('tizard'))   return 'A. Tizard';
+    if(n.includes('watts'))    return 'D. Watts';
+    if(n.includes('phillips')) return 'J. Phillips';
+    if(n.includes('whitfield'))return 'B. Whitfield';
+    if(n.includes('fox'))      return 'J. Fox';
+    return null;
+  })();
+  const allIds=Object.keys(PROJECTS).filter(id=>isOwner||!myLmKey||PROJECTS[id].lmgr===myLmKey);
   const now=new Date();
   const items=[];
   allIds.forEach(id=>{
@@ -1537,6 +1590,524 @@ function openDeadlinesModal(type){
   modalBox.appendChild(tableWrap);
   document.getElementById('modal').style.display='flex';
 }
+
+
+// ══ DC PROPOSAL CONFIGURATOR ══════════════════════════════════════════
+// Matrix anchored to Jeff Fox's 15MW real project (April 2026)
+
+const CFG_MATRIX = {
+  bands:[
+    {id:'A',label:'Small / Edge',    min:0,  max:5,  scale:0.60},
+    {id:'B',label:'Medium Enterprise',min:5,  max:20, scale:1.00},
+    {id:'C',label:'Large Enterprise', min:20, max:50, scale:1.40},
+    {id:'D',label:'Hyperscale',       min:50, max:999,scale:1.80},
+  ],
+  // Stage definitions — hours as % of DD (Stage 4) baseline
+  // Source: Jeff Fox 15MW project, validated to within 3%
+  stages:{
+    'S1':{pctOfDD:0.09,engPct:0.82,bimPct:0.18,weeks:4, riba:'RIBA 1',code:'Brief'},
+    'S2':{pctOfDD:0.32,engPct:0.78,bimPct:0.22,weeks:8, riba:'RIBA 2',code:'CD'},
+    'S3':{pctOfDD:0.64,engPct:0.75,bimPct:0.25,weeks:10,riba:'RIBA 3',code:'SD'},
+    'S4':{pctOfDD:1.00,engPct:0.72,bimPct:0.28,weeks:2, riba:'RIBA 4',code:'DD'},
+    'IFC':{pctOfDD:0.08,engPct:0.52,bimPct:0.48,weeks:null,riba:'IFC',code:'IFC'},
+    'S5':{pctOfDD:0.12,engPct:0.60,bimPct:0.40,weeks:null,riba:'RIBA 5',code:'CA'},
+  },
+  anchorDD:5000, // Band B DD hours (15MW real project)
+  // Role mix: Mech 45% / Elec 55%, Senior 66% / Junior 34%
+  mechShare:0.45, elecShare:0.55, srShare:0.66, jrShare:0.34,
+  // Cooling type mechanical multipliers
+  cooling:{
+    'air':       {label:'Air-cooled (CRAC/CRAH)',        mechMult:1.00,phUplift:false},
+    'inrow':     {label:'In-row cooling',                mechMult:1.10,phUplift:false},
+    'hybrid7030':{label:'70/30 Hybrid (Air + Liquid)',   mechMult:1.15,phUplift:false},
+    'reardoor':  {label:'Rear-door Heat Exchanger',      mechMult:1.20,phUplift:false},
+    'dlc_cp':    {label:'DLC — Cold Plate',              mechMult:1.35,phUplift:false},
+    'dlc_1p':    {label:'DLC — Single-phase Immersion',  mechMult:1.50,phUplift:false},
+    'dlc_2p':    {label:'DLC — Two-phase Immersion',     mechMult:1.60,phUplift:false},
+    'evap':      {label:'Evaporative (ME climate)',      mechMult:1.10,phUplift:true},
+  },
+  // CFD stage availability: ext=external, int=internal
+  cfdStages:{
+    'S1':null,
+    'S2':{ext:true,int:false},
+    'S3':{ext:true,int:true},
+    'S4':{ext:true,int:true},
+    'IFC':null,'S5':null,
+  },
+  // CFD engineer rates for cost→hours conversion (GBP)
+  cfdRates:{lead:96.05, junior:82.13},
+};
+
+// State object
+let _cfg = {
+  step:1, mode:'new', projectId:null,
+  framework:'riba',
+  itLoad:null, coolingId:'air', scopeId:'full_mep',
+  stages:[], cfdEnabled:false,
+  cfdCosts:{}, // stageId → {ext:£, int:£}
+};
+
+function openCfgModal(mode='new', projectId=null) {
+  _cfg = {step:1,mode,projectId,framework:'riba',itLoad:null,coolingId:'air',
+    scopeId:'full_mep',stages:[],cfdEnabled:false,cfdCosts:{}};
+
+  // If existing project, pre-fill from coversheet data
+  if(mode==='existing' && projectId && PROJECTS[projectId]) {
+    const p = PROJECTS[projectId];
+    _cfg.itLoad = parseFloat(p.it||p.mw||0)||null;
+    _cfg.projectId = projectId;
+    // Framework from existing project state
+    const ps = getPS(projectId);
+    if(ps.stageFrame) _cfg.framework = ps.stageFrame;
+  }
+
+  document.getElementById('cfg-modal').style.display='flex';
+  cfgRender();
+}
+
+function closeCfgModal() {
+  document.getElementById('cfg-modal').style.display='none';
+}
+
+function cfgNext() {
+  if(!cfgValidate()) return;
+  if(_cfg.step < 4) { _cfg.step++; cfgRender(); }
+  else cfgGenerate();
+}
+
+function cfgBack() {
+  if(_cfg.step > 1) { _cfg.step--; cfgRender(); }
+}
+
+function cfgValidate() {
+  if(_cfg.step===1) {
+    const it = parseFloat(document.getElementById('cfg-it')?.value||0);
+    if(!it||it<=0) { alert('Please enter a valid IT load (MW)'); return false; }
+    _cfg.itLoad = it;
+    _cfg.coolingId = document.getElementById('cfg-cooling')?.value||'air';
+    _cfg.scopeId = document.getElementById('cfg-scope')?.value||'full_mep';
+    _cfg.framework = document.querySelector('input[name="cfg-frame"]:checked')?.value||'riba';
+    if(_cfg.mode==='new') {
+      _cfg._newTitle = document.getElementById('cfg-title')?.value||'';
+      _cfg._newLm = document.getElementById('cfg-lm')?.value||'';
+      if(!_cfg._newTitle) { alert('Please enter a project title'); return false; }
+    }
+    return true;
+  }
+  if(_cfg.step===2) {
+    const checked = [...document.querySelectorAll('.cfg-stage-cb:checked')].map(c=>c.value);
+    if(!checked.length) { alert('Please select at least one stage'); return false; }
+    _cfg.stages = checked;
+    _cfg.cfdEnabled = document.getElementById('cfg-cfd-toggle')?.checked||false;
+    return true;
+  }
+  if(_cfg.step===3) {
+    // Collect CFD costs
+    _cfg.cfdCosts = {};
+    _cfg.stages.forEach(sid=>{
+      const cs = CFG_MATRIX.cfdStages[sid];
+      if(!cs) return;
+      const ext = parseFloat(document.getElementById('cfg-cfd-'+sid+'-ext')?.value||0)||0;
+      const int_ = parseFloat(document.getElementById('cfg-cfd-'+sid+'-int')?.value||0)||0;
+      if(ext||int_) _cfg.cfdCosts[sid] = {ext,int:int_};
+    });
+    return true;
+  }
+  return true;
+}
+
+function cfgRender() {
+  const body = document.getElementById('cfg-body');
+  const nextBtn = document.getElementById('cfg-next');
+  const backBtn = document.getElementById('cfg-back');
+  const sub = document.getElementById('cfg-subtitle');
+
+  // Update step indicators
+  [1,2,3,4].forEach(s=>{
+    const el = document.getElementById('cfg-step-ind-'+s);
+    if(el) el.style.background = s<=_cfg.step?'var(--accent)':'var(--border)';
+  });
+
+  backBtn.style.display = _cfg.step>1?'block':'none';
+  nextBtn.textContent = _cfg.step===4?'Generate Fee Estimate ✓':'Next →';
+
+  if(_cfg.step===1) cfgRenderStep1(body, sub);
+  else if(_cfg.step===2) cfgRenderStep2(body, sub);
+  else if(_cfg.step===3) cfgRenderStep3(body, sub);
+  else if(_cfg.step===4) cfgRenderStep4(body, sub);
+}
+
+function cfgField(label, content, note='') {
+  return `<div style="margin-bottom:14px">
+    <label style="font-size:10px;font-family:var(--fm);color:var(--text3);letter-spacing:.5px;text-transform:uppercase;font-weight:600;display:block;margin-bottom:5px">${label}</label>
+    ${content}
+    ${note?`<div style="font-size:10px;color:var(--text3);font-family:var(--fm);margin-top:4px;font-style:italic">${note}</div>`:''}
+  </div>`;
+}
+
+function cfgInput(id, type='text', placeholder='', value='', extra='') {
+  return `<input id="${id}" type="${type}" placeholder="${placeholder}" value="${value}" ${extra}
+    style="width:100%;padding:8px 10px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text);box-sizing:border-box"/>`;
+}
+
+function cfgSelect(id, options, selected='') {
+  return `<select id="${id}" style="width:100%;padding:8px 10px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text)">
+    ${options.map(([v,l])=>`<option value="${v}"${v===selected?' selected':''}>${l}</option>`).join('')}
+  </select>`;
+}
+
+function cfgRenderStep1(body, sub) {
+  sub.textContent = 'Step 1 of 4 — Project details';
+  const lmOptions = [
+    ['','Select LM...'],
+    ['T. Ryan','T. Ryan'],['A. Tizard','A. Tizard'],['D. Watts','D. Watts'],
+    ['J. Phillips','J. Phillips'],['B. Whitfield','B. Whitfield'],['J. Fox','J. Fox'],
+  ];
+  const newFields = _cfg.mode==='new'?`
+    ${cfgField('Project title <span style="color:var(--coral)">*</span>', cfgInput('cfg-title','text','e.g. Abu Dhabi Hyperscale DC — Phase 1',_cfg._newTitle||''))}
+    ${cfgField('Lead manager', cfgSelect('cfg-lm',lmOptions,_cfg._newLm||''))}
+    <div style="height:1px;background:var(--border);margin:16px 0"></div>`:'';
+
+  const existingInfo = _cfg.mode==='existing'&&_cfg.projectId?`
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:16px">
+      <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-bottom:2px">Configuring fee estimate for</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${PROJECTS[_cfg.projectId]?.name||'—'}</div>
+      <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">${PROJECTS[_cfg.projectId]?.ref||'—'}</div>
+    </div>`:'';
+
+  body.innerHTML = existingInfo + newFields + `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+      ${cfgField('IT Load (MW) <span style="color:var(--coral)">*</span>',
+        `<div style="display:flex;align-items:center;gap:6px">
+          ${cfgInput('cfg-it','number','e.g. 15',_cfg.itLoad||'','min="0.1" step="0.5"')}
+          <span style="font-size:11px;font-family:var(--fm);color:var(--text3);white-space:nowrap">MW IT</span>
+        </div>`,
+        'IT load drives the band and hours calculation')}
+      ${cfgField('Cooling type', cfgSelect('cfg-cooling',
+        Object.entries(CFG_MATRIX.cooling).map(([k,v])=>[k,v.label]),
+        _cfg.coolingId))}
+    </div>
+    ${cfgField('MEP scope', cfgSelect('cfg-scope',[
+      ['full_mep','Full MEP (Mechanical + Electrical)'],
+      ['mech_only','Mechanical only'],
+      ['elec_only','Electrical only'],
+    ],_cfg.scopeId))}
+    <div style="margin-bottom:14px">
+      <label style="font-size:10px;font-family:var(--fm);color:var(--text3);letter-spacing:.5px;text-transform:uppercase;font-weight:600;display:block;margin-bottom:8px">Design stage framework</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:var(--bg3);border:2px solid ${_cfg.framework==='riba'?'var(--accent)':'var(--border)'};border-radius:8px;cursor:pointer">
+          <input type="radio" name="cfg-frame" value="riba" ${_cfg.framework==='riba'?'checked':''} onchange="document.querySelectorAll('.cfg-frame-card').forEach(c=>c.style.borderColor='var(--border)');this.closest('label').style.borderColor='var(--accent)'" style="margin-top:2px;accent-color:var(--accent)"/>
+          <div><div style="font-size:12px;font-weight:600;color:var(--text)">RIBA Plan of Work</div><div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Stages 0–7 · UK standard</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:var(--bg3);border:2px solid ${_cfg.framework==='code'?'var(--accent)':'var(--border)'};border-radius:8px;cursor:pointer">
+          <input type="radio" name="cfg-frame" value="code" ${_cfg.framework==='code'?'checked':''} onchange="document.querySelectorAll('.cfg-frame-card').forEach(c=>c.style.borderColor='var(--border)');this.closest('label').style.borderColor='var(--accent)'" style="margin-top:2px;accent-color:var(--accent)"/>
+          <div><div style="font-size:12px;font-weight:600;color:var(--text)">CD / SD / DD / IFC</div><div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Code stages · Middle East / US</div></div>
+        </label>
+      </div>
+    </div>`;
+}
+
+function cfgRenderStep2(body, sub) {
+  sub.textContent = 'Step 2 of 4 — Stages in scope';
+
+  // Detect band
+  const band = CFG_MATRIX.bands.find(b=>_cfg.itLoad>=b.min&&_cfg.itLoad<b.max)||CFG_MATRIX.bands[3];
+
+  const stageList = _cfg.framework==='riba'?[
+    {id:'S1',label:'Stage 1 — Defining Brief',sub:'RIBA 1'},
+    {id:'S2',label:'Stage 2 — Concept Design',sub:'RIBA 2'},
+    {id:'S3',label:'Stage 3 — Spatial Coordination',sub:'RIBA 3'},
+    {id:'S4',label:'Stage 4 — Technical Design',sub:'RIBA 4'},
+    {id:'IFC',label:'IFC — Issued for Construction',sub:'RIBA 4+'},
+    {id:'S5',label:'Stage 5 — Manufacturing & Construction',sub:'RIBA 5 / CA'},
+  ]:[
+    {id:'S2',label:'CD — Concept Design',sub:'Concept Design'},
+    {id:'S3',label:'SD — Scheme Design',sub:'Scheme Design'},
+    {id:'S4',label:'DD — Detailed Design',sub:'Detailed Design'},
+    {id:'IFC',label:'IFC — Issued for Construction',sub:'Issued for Construction'},
+    {id:'S5',label:'CA — Construction Administration',sub:'Construction Admin'},
+  ];
+
+  const baseDD = CFG_MATRIX.anchorDD * band.scale;
+  const stageHtml = stageList.map(s=>{
+    const sm = CFG_MATRIX.stages[s.id];
+    const hrs = sm?Math.round(baseDD*sm.pctOfDD):0;
+    const isChecked = _cfg.stages.includes(s.id)||_cfg.stages.length===0;
+    return `<label style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;cursor:pointer;margin-bottom:6px">
+      <input type="checkbox" class="cfg-stage-cb" value="${s.id}" ${isChecked?'checked':''} style="accent-color:var(--accent);width:14px;height:14px;flex-shrink:0"/>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:600;color:var(--text)">${s.label}</div>
+        <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">${s.sub}${sm&&sm.weeks?` · ${sm.weeks} weeks typical`:''}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:12px;font-weight:600;font-family:var(--fm);color:var(--text2)">${hrs?'~'+hrs+' hrs':'—'}</div>
+        <div style="font-size:9px;font-family:var(--fm);color:var(--text3)">est. total</div>
+      </div>
+    </label>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div style="background:rgba(141,198,63,.06);border:1px solid rgba(141,198,63,.2);border-radius:7px;padding:10px 14px;margin-bottom:16px">
+      <div style="font-size:11px;font-family:var(--fm);color:var(--text2)">
+        <strong>${_cfg.itLoad}MW IT Load</strong> → <span style="color:var(--accent)">${band.label} (Band ${band.id})</span>
+        &nbsp;·&nbsp; ${CFG_MATRIX.cooling[_cfg.coolingId]?.label||''}
+        &nbsp;·&nbsp; ${_cfg.scopeId==='full_mep'?'Full MEP':_cfg.scopeId==='mech_only'?'Mechanical only':'Electrical only'}
+      </div>
+    </div>
+    <div style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-bottom:10px">Select all stages in scope for this project. Estimated hours shown for reference — these will be populated into the fee calculator.</div>
+    ${stageHtml}
+    <div style="height:1px;background:var(--border);margin:16px 0"></div>
+    <label style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;cursor:pointer">
+      <input type="checkbox" id="cfg-cfd-toggle" ${_cfg.cfdEnabled?'checked':''} style="accent-color:var(--accent);width:14px;height:14px;flex-shrink:0"/>
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--text)">Include CFD Analysis</div>
+        <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Computational Fluid Dynamics — thermal airflow modelling</div>
+      </div>
+    </label>`;
+}
+
+function cfgRenderStep3(body, sub) {
+  sub.textContent = 'Step 3 of 4 — CFD costs';
+
+  if(!_cfg.cfdEnabled) {
+    // Skip to step 4 automatically
+    _cfg.step = 4;
+    cfgRenderStep4(body, sub);
+    document.getElementById('cfg-step-ind-3').style.background='var(--border)';
+    return;
+  }
+
+  const cfdStages = _cfg.stages.filter(sid=>CFG_MATRIX.cfdStages[sid]);
+
+  if(!cfdStages.length) {
+    body.innerHTML=`<div style="padding:40px;text-align:center;color:var(--text3);font-family:var(--fm)">No stages selected support CFD. CFD applies to Stages 2, 3 and 4.</div>`;
+    return;
+  }
+
+  const stageLabel = {S1:'Stage 1',S2:'Stage 2 / CD',S3:'Stage 3 / SD',S4:'Stage 4 / DD',IFC:'IFC',S5:'Stage 5 / CA'};
+
+  const cfdFields = cfdStages.map(sid=>{
+    const cs = CFG_MATRIX.cfdStages[sid];
+    const saved = _cfg.cfdCosts[sid]||{};
+    return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:14px;margin-bottom:10px">
+      <div style="font-size:11px;font-weight:600;color:var(--text);margin-bottom:10px">${stageLabel[sid]||sid}</div>
+      <div style="display:grid;grid-template-columns:${cs.int?'1fr 1fr':'1fr'};gap:10px">
+        ${cs.ext?`<div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:.5px;text-transform:uppercase;display:block;margin-bottom:4px">External CFD cost (${curCode})</label>
+          <input id="cfg-cfd-${sid}-ext" type="number" placeholder="e.g. 8000" value="${saved.ext||''}"
+            style="width:100%;padding:7px 10px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text);box-sizing:border-box"/>
+        </div>`:''}
+        ${cs.int?`<div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--text3);letter-spacing:.5px;text-transform:uppercase;display:block;margin-bottom:4px">Internal CFD cost (${curCode})</label>
+          <input id="cfg-cfd-${sid}-int" type="number" placeholder="e.g. 5000" value="${saved.int||''}"
+            style="width:100%;padding:7px 10px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text);box-sizing:border-box"/>
+        </div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:7px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-size:11px;font-weight:600;color:var(--blue);margin-bottom:4px">ℹ  How CFD costs work</div>
+      <div style="font-size:11px;font-family:var(--fm);color:var(--text2);line-height:1.5">CFD is quoted as a lump sum on the client fee schedule. Enter the estimated cost per stage below — the platform will automatically convert this to engineer hours using PPa standard rates (Lead CFD: £96/hr, CFD Engineer: £82/hr) for internal scheduling and resource allocation. These hours appear in the operations schedule but not on the client proposal.</div>
+      <div style="margin-top:8px;font-size:10px;font-family:var(--fm);color:var(--text3)">External CFD = airflow modelling of external environment (Stage 2+) · Internal CFD = within the data hall (Stage 3+)</div>
+    </div>
+    ${cfdFields}
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-top:6px">
+      <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Leave fields blank if CFD cost is not yet known — you can add it manually in the fee calculator after generation.</div>
+    </div>`;
+}
+
+function cfgRenderStep4(body, sub) {
+  sub.textContent = 'Step 4 of 4 — Review & generate';
+
+  const band = CFG_MATRIX.bands.find(b=>_cfg.itLoad>=b.min&&_cfg.itLoad<b.max)||CFG_MATRIX.bands[3];
+  const cooling = CFG_MATRIX.cooling[_cfg.coolingId]||CFG_MATRIX.cooling.air;
+  const baseDD = CFG_MATRIX.anchorDD * band.scale;
+
+  // Calculate all stage hours
+  const stageLabel={S1:'Stage 1 / Brief',S2:'Stage 2 / CD',S3:'Stage 3 / SD',S4:'Stage 4 / DD',IFC:'IFC',S5:'Stage 5 / CA'};
+  const summary = _cfg.stages.map(sid=>{
+    const sm = CFG_MATRIX.stages[sid];
+    if(!sm) return null;
+    const total = Math.round(baseDD*sm.pctOfDD);
+    const eng = Math.round(total*sm.engPct);
+    const bim = Math.round(total*sm.bimPct);
+    const mechMult = _cfg.scopeId==='elec_only'?0:cooling.mechMult;
+    const elecMult = _cfg.scopeId==='mech_only'?0:1;
+    const mech = Math.round(eng*0.45*mechMult);
+    const elec = Math.round(eng*0.55*elecMult);
+    const pd = sm.weeks?sm.weeks*8:Math.round(total*0.05);
+    // CFD hours derived from cost
+    let cfdHrs=0,cfdCostTotal=0;
+    if(_cfg.cfdEnabled && _cfg.cfdCosts[sid]){
+      const {ext,int}=_cfg.cfdCosts[sid];
+      cfdCostTotal=(ext||0)+(int||0);
+      const blendedRate=(CFG_MATRIX.cfdRates.lead+CFG_MATRIX.cfdRates.junior)/2;
+      // Convert from curCode to GBP for hours calc
+      const gbpCost=cfdCostTotal/(FX[curCode]||1);
+      cfdHrs=Math.round(gbpCost/blendedRate);
+    }
+    return {sid,label:stageLabel[sid],total:pd+mech+elec+bim,pd,mech,elec,bim,cfdHrs,cfdCostTotal,weeks:sm.weeks};
+  }).filter(Boolean);
+
+  const grandTotal = summary.reduce((s,r)=>s+r.total+r.cfdHrs,0);
+  const phUpliftNote = cooling.phUplift?`<div style="background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.2);border-radius:6px;padding:10px 14px;margin-bottom:12px"><div style="font-size:11px;font-weight:600;color:var(--amber)">⚠  Evaporative cooling — PH uplift required</div><div style="font-size:10px;font-family:var(--fm);color:var(--text2);margin-top:4px">Evaporative cooling requires additional Public Health engineer hours for water treatment, legionella risk, and drainage design. Review and add PH hours manually in the fee calculator after generation.</div></div>`:'';
+
+  const rows = summary.map(r=>`
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 10px;font-size:11px;color:var(--text);font-weight:600">${r.label}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);color:var(--text2);text-align:right">${r.pd}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);color:var(--text2);text-align:right">${r.mech}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);color:var(--text2);text-align:right">${r.elec}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);color:var(--text2);text-align:right">${r.bim}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);color:var(--blue);text-align:right">${r.cfdHrs||'—'}</td>
+      <td style="padding:7px 10px;font-size:11px;font-family:var(--fm);font-weight:700;color:var(--text);text-align:right">${r.total+(r.cfdHrs||0)}</td>
+    </tr>`).join('');
+
+  body.innerHTML = `
+    <div style="background:rgba(141,198,63,.06);border:1px solid rgba(141,198,63,.2);border-radius:7px;padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;flex-wrap:wrap;gap:16px">
+        <div><div style="font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px">IT Load</div><div style="font-size:12px;font-weight:700;color:var(--text)">${_cfg.itLoad}MW → Band ${band.id} (${band.label})</div></div>
+        <div><div style="font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Cooling</div><div style="font-size:12px;font-weight:700;color:var(--text)">${cooling.label}</div></div>
+        <div><div style="font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Scope</div><div style="font-size:12px;font-weight:700;color:var(--text)">${_cfg.scopeId==='full_mep'?'Full MEP':_cfg.scopeId==='mech_only'?'Mech only':'Elec only'}</div></div>
+        <div><div style="font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Total hours</div><div style="font-size:12px;font-weight:700;color:var(--accent)">${grandTotal.toLocaleString()}</div></div>
+      </div>
+    </div>
+    ${phUpliftNote}
+    <div style="overflow-x:auto;margin-bottom:14px">
+      <table style="width:100%;border-collapse:collapse;min-width:500px">
+        <thead><tr style="background:var(--bg3);border-bottom:2px solid var(--border)">
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:left">Stage</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:right">PD</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:right">Mech</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:right">Elec</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:right">BIM</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--blue);text-transform:uppercase;letter-spacing:.5px;text-align:right">CFD hrs</th>
+          <th style="padding:7px 10px;font-size:9px;font-family:var(--fm);color:var(--text3);text-transform:uppercase;letter-spacing:.5px;text-align:right">Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="background:var(--bg3);border-top:2px solid var(--border)">
+          <td style="padding:7px 10px;font-size:11px;font-weight:700;color:var(--text)">TOTAL</td>
+          <td colspan="5"></td>
+          <td style="padding:7px 10px;font-size:13px;font-weight:700;font-family:var(--fm);color:var(--accent);text-align:right">${grandTotal.toLocaleString()}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+      <div style="font-size:10px;font-family:var(--fm);color:var(--text3)">Clicking <strong>Generate Fee Estimate</strong> will ${_cfg.mode==='new'?'create a new project and ':''} populate the fee calculator with these hours. Roles will be pre-selected and hours distributed. You can adjust any figure in the fee calculator afterwards.</div>
+    </div>`;
+}
+
+function cfgGenerate() {
+  const band = CFG_MATRIX.bands.find(b=>_cfg.itLoad>=b.min&&_cfg.itLoad<b.max)||CFG_MATRIX.bands[3];
+  const cooling = CFG_MATRIX.cooling[_cfg.coolingId]||CFG_MATRIX.cooling.air;
+  const baseDD = CFG_MATRIX.anchorDD * band.scale;
+
+  let targetId = _cfg.projectId;
+
+  // Create new project if needed
+  if(_cfg.mode==='new') {
+    const newId = 'cfg-'+Date.now();
+    const lm = _cfg._newLm||currentProfile?.initials||'';
+    PROJECTS[newId] = {
+      id:newId, ref:generateRef(lm), name:_cfg._newTitle,
+      status:'New Lead', lmgr:lm, mw:'', it:String(_cfg.itLoad||''),
+      dct:'', loc:'', src:'', client:'', efee:'', feecur:curCode,
+      region:currentProfile?.region||'EMEA',
+    };
+    PIPE[newId] = {stage:'Proposal', attempts:0, closedReason:null, qualScore:null};
+    PER_PROJ[newId] = {};
+    placeCard(newId);
+    targetId = newId;
+    saveProjectToSupabase(newId);
+  }
+
+  if(!targetId) { alert('No project found'); return; }
+
+  const ps = getPS(targetId);
+
+  // Set stage framework on coversheet
+  ps.stageFrame = _cfg.framework;
+
+  // Populate fee calculator — select roles and set hours
+  const mechMult = _cfg.scopeId==='elec_only'?0:cooling.mechMult;
+  const elecMult = _cfg.scopeId==='mech_only'?0:1;
+  const cfdEnabled = _cfg.cfdEnabled && Object.keys(_cfg.cfdCosts).length>0;
+
+  // Build role set
+  const roleSet = new Set(['proj_dir','sr_mech','mech_eng','sr_elec','elec_eng','sr_bim','bim_tech']);
+  if(mechMult===0) { roleSet.delete('sr_mech'); roleSet.delete('mech_eng'); }
+  if(elecMult===0) { roleSet.delete('sr_elec'); roleSet.delete('elec_eng'); }
+  if(cfdEnabled)   { roleSet.add('lead_cfd'); roleSet.add('cfd_eng'); }
+
+  ps.selRoles = roleSet;
+
+  // Enable selected stages and populate hours
+  const stagesEnabled = new Set(_cfg.stages);
+  ps.activeStages = stagesEnabled;
+
+  // Build hours grid: stageId → roleId → hours
+  if(!ps.hours) ps.hours = {};
+  _cfg.stages.forEach(sid=>{
+    const sm = CFG_MATRIX.stages[sid];
+    if(!sm) return;
+    const total = Math.round(baseDD*sm.pctOfDD);
+    const eng = Math.round(total*sm.engPct);
+    const bim = Math.round(total*sm.bimPct);
+    const mech = Math.round(eng*0.45*mechMult);
+    const elec = Math.round(eng*0.55*elecMult);
+    const pd = sm.weeks?sm.weeks*8:Math.round(total*0.05);
+    if(!ps.hours[sid]) ps.hours[sid]={};
+    ps.hours[sid]['proj_dir'] = pd;
+    ps.hours[sid]['sr_mech']  = Math.round(mech*0.66);
+    ps.hours[sid]['mech_eng'] = Math.round(mech*0.34);
+    ps.hours[sid]['sr_elec']  = Math.round(elec*0.66);
+    ps.hours[sid]['elec_eng'] = Math.round(elec*0.34);
+    ps.hours[sid]['sr_bim']   = Math.round(bim*0.5);
+    ps.hours[sid]['bim_tech'] = Math.round(bim*0.5);
+    // CFD hours
+    if(cfdEnabled && _cfg.cfdCosts[sid]) {
+      const {ext,int:int_}=_cfg.cfdCosts[sid];
+      const costGBP=((ext||0)+(int_||0))/(FX[curCode]||1);
+      const blended=(CFG_MATRIX.cfdRates.lead+CFG_MATRIX.cfdRates.junior)/2;
+      const cfdHrs=Math.round(costGBP/blended);
+      ps.hours[sid]['lead_cfd']=Math.round(cfdHrs*0.5);
+      ps.hours[sid]['cfd_eng'] =Math.round(cfdHrs*0.5);
+    }
+  });
+
+  closeCfgModal();
+
+  // Navigate to project and open fee calculator tab
+  switchView('pipeline');
+  setTimeout(()=>{
+    loadProject(targetId, null);
+    setTimeout(()=>{
+      const dp=document.getElementById('detail-panel');
+      if(dp)dp.scrollIntoView({behavior:'smooth',block:'start'});
+      // Open fee tab
+      setTimeout(()=>{ const feeTab=document.getElementById('tab-fee'); if(feeTab)feeTab.click(); },400);
+    },200);
+  },400);
+
+  saveProjectToSupabase(targetId);
+  toast('Fee estimate generated — '+(grandTotalFromCfg(_cfg,band,cooling,baseDD)).toLocaleString()+' hours pre-populated');
+}
+
+function grandTotalFromCfg(cfg,band,cooling,baseDD){
+  return cfg.stages.reduce((sum,sid)=>{
+    const sm=CFG_MATRIX.stages[sid];if(!sm)return sum;
+    const t=Math.round(baseDD*sm.pctOfDD);
+    let cfd=0;
+    if(cfg.cfdEnabled&&cfg.cfdCosts[sid]){
+      const {ext,int:i}=cfg.cfdCosts[sid];
+      cfd=Math.round(((ext||0)+(i||0))/(FX[curCode]||1)/((CFG_MATRIX.cfdRates.lead+CFG_MATRIX.cfdRates.junior)/2));
+    }
+    return sum+t+cfd;
+  },0);
+}
+
 
 // ══ REALTIME SYNC ═════════════════════════════════════════
 let _realtimeChannel = null;
@@ -4419,6 +4990,7 @@ function loadProject(id,cardEl){
   currentId=id;
   const p=PROJECTS[id];
   (()=>{const _dp=document.getElementById('detail-panel');if(_dp)_dp.style.display='flex';})();
+  (()=>{const _cb=document.getElementById('cfg-estimate-btn');if(_cb)_cb.style.display='inline-flex';})();
   document.getElementById('dpname').textContent=p.name||'—';
   const pipe=getPipe(id);
   const _dpref=document.getElementById('dpref');if(_dpref)_dpref.innerHTML=`${p.ref} · <span class="badge ${getBadgeClass(pipe.stage)}">${pipe.stage}</span>`;
@@ -6599,6 +7171,7 @@ function renderListView(view){
         <input class="lv-search" placeholder="Search name, ref, client, location…" value="${sq}" oninput="setLvSearch('${view}',this.value)"/></div>
       <div class="lv-filter">${chipsHtml}</div>
       <span class="lv-count">${ids.length} record${ids.length!==1?'s':''}</span>
+      <button class="btn bg bsm" onclick="openCfgModal('new')" style="border:1px solid var(--accent);color:var(--accent);background:transparent" title="Generate fee estimate from project brief">⚡ Quick Estimate</button>
       <button class="btn bp bsm" onclick="openNLModal()">+ New Lead</button>
     </div>
     <div class="lv-tbl-wrap">
