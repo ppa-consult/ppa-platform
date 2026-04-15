@@ -2612,6 +2612,13 @@ function cfgApplyHours(projectId, result, cfg) {
   if(!ps.subConsultants || ps.subConsultants.length === 0) {
     ps.subConsultants = cfgSubConsultDefaults(cfg);
   }
+  // Force immediate state save (bypasses debounce) so subConsultants persists on reload
+  if(_syncEnabled && projectId) {
+    const stRow = stateToRow(projectId);
+    if(stRow) supa.from('project_state').upsert(stRow).then(r=>{
+      if(r.error) console.warn('[cfgApplyHours] state save failed:', r.error.message);
+    });
+  }
 
   // Store wizard config for fee calculator and programme reference
   ps.wizardCfg = {
@@ -2676,6 +2683,13 @@ function cfgApplyCoversheet(projectId, cfg) {
   }
 }
 
+function _updateBannerItems(id) {
+  const banner = document.getElementById('cfg-completion-banner');
+  if(!banner) return;
+  // Re-run the full banner check — it removes itself if no missing fields
+  cfgShowCompletionBanner(id);
+}
+
 function cfgShowCompletionBanner(projectId) {
   const p = PROJECTS[projectId];
   if(!p) return;
@@ -2710,10 +2724,10 @@ function cfgShowCompletionBanner(projectId) {
       </div>
       <button onclick="document.getElementById('cfg-completion-banner').remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;padding:0 0 0 12px;line-height:1;flex-shrink:0">✕</button>
     </div>
-    <div style="display:flex;flex-direction:column;gap:5px">
+    <div style="display:flex;flex-direction:column;gap:5px" id="cfg-banner-items">
       ${missing.map(m=>`
-        <div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 8px;background:var(--bg3);border-radius:5px"
-          onclick="document.getElementById('${m.field}')?.focus();document.getElementById('${m.field}')?.scrollIntoView({behavior:'smooth',block:'center'})">
+        <div id="banner-item-${m.field}" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 8px;background:var(--bg3);border-radius:5px"
+          onclick="const el=document.getElementById('${m.field}');if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline='2px solid var(--amber)';el.style.boxShadow='0 0 0 3px rgba(239,159,39,.15)';setTimeout(()=>{el.style.outline='';el.style.boxShadow='';},2500);}">
           <span style="width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;display:inline-block"></span>
           <span style="font-size:11px;font-family:var(--fm);color:var(--text2)">${m.label}</span>
           <span style="font-size:10px;color:var(--text3);margin-left:auto">tap to fill</span>
@@ -5703,6 +5717,8 @@ function updateFeeHint(){
 function saveChanges(){
   if(!currentId)return;
   const p=PROJECTS[currentId];
+  // Update completion banner after save
+  setTimeout(()=>_updateBannerItems(currentId), 100);
   // Read all overview fields and persist to PROJECTS — nothing resets
   const g=id=>document.getElementById(id);
   p.name=g('ovtitle').value.trim()||p.name;
@@ -5771,6 +5787,8 @@ function hasRealPPACode(id){
 let _refHintBusy=false;
 let _inEditMode=false; // true when user clicked Edit Proposal on a Proposal/Neg/Live project
 function updateRefHint(){
+  // Update banner when ref changes (most common first unlock action)
+  if(currentId) setTimeout(()=>_updateBannerItems(currentId), 200);
   if(!currentId||_refHintBusy)return;
   _refHintBusy=true;
   try{
