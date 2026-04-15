@@ -5759,6 +5759,14 @@ function saveChanges(){
   const card=document.getElementById('card-'+currentId);
   if(card){const t=card.querySelector('.ctitle');if(t)t.textContent=p.name;}
   document.getElementById('dpname').textContent=p.name;
+  // Update detail panel header ref + stage badge
+  const _dpref=document.getElementById('dpref');
+  if(_dpref)_dpref.innerHTML=`${p.ref} · <span class="badge ${getBadgeClass(getPipe(currentId).stage)}">${getPipe(currentId).stage}</span>`;
+  // Update kanban card ref tag
+  const _cref=card?.querySelector('.cref');
+  if(_cref)_cref.textContent=p.ref;
+  // Re-render the full card to pick up new ref and any field changes
+  placeCard(currentId);
   unsaved=false;
   updateCardFeeTags(currentId);
   renderStagePanel(currentId);
@@ -6156,6 +6164,28 @@ function closeModal(){(()=>{const _e=document.getElementById('modal');if(_e)_e.s
 // ══ COVER PAGE ════════════════════════════════════════════
 function renderCoverPage(id){
   const ps=getPS(id);const el=document.getElementById('tp-cv-inner');if(!el)return;
+
+  // ── RECOVERY: re-derive from wizardCfg if state is missing ──────
+  // Runs every time cover page opens — safe to call repeatedly
+  if(ps.wizardCfg) {
+    const wc = ps.wizardCfg;
+    // Recover stageFramework
+    if(!ps.stageFramework || ps.stageFramework === 'riba') {
+      const isUK = (wc.framework === 'code' || wc.framework === 'uk');
+      if(isUK) ps.stageFramework = 'uk';
+    }
+    // Recover selStages if empty
+    if(!ps.selStages || ps.selStages.size === 0) {
+      const toRiba = {S1:'1',TF:'1',S2:'2',S3:'3',S4:'4',S5:'5'};
+      const toUK   = {S1:'brief',TF:'tf',S2:'cd',S3:'sd',S4:'dd',S5:'ca'};
+      const isUK   = ps.stageFramework === 'uk';
+      ps.selStages = new Set((wc.stages||[]).map(s=>isUK?toUK[s]:toRiba[s]).filter(Boolean));
+    }
+    // Recover subConsultants if empty
+    if(!ps.subConsultants || ps.subConsultants.length === 0) {
+      ps.subConsultants = cfgSubConsultDefaults(wc);
+    }
+  }
   if(ps.currency&&ps.currency!==curCode){
     curCode=ps.currency;
     document.querySelectorAll('.cbtn').forEach(b=>b.classList.toggle('on',b.textContent===curCode));
