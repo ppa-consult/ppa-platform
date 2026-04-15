@@ -1846,7 +1846,7 @@ function openCfgModal(mode='new', projectId=null) {
     const p  = PROJECTS[projectId];
     const ps = getPS(projectId);
     _cfg.itLoad       = parseFloat(p.it||p.mw||0)||null;
-    _cfg.framework    = ps.stageFrame||'riba';
+    _cfg.framework    = ps.stageFramework||'riba';
     _cfg.coolingId    = ps.coolingId||'air';
     _cfg.scopeId      = ps.scopeId||'full_mep';
     _cfg.lmgr         = p.lmgr||'';
@@ -2464,6 +2464,78 @@ async function cfgCreateProject(cfg) {
   return newId;
 }
 
+
+// ── SCOPE INTELLIGENCE — derives scope defaults from wizard config ──
+// Pure function: takes wizard cfg, returns scopeConfig overrides object
+// Keys: "item_id:stageNum" → 'Y' | 'N' | 'EXCL'
+// Only sets items that deviate from the DELIVERABLES default state
+function cfgScopeDefaults(cfg) {
+  const sc = {};
+  const m = CFG_MATRIX;
+  const band = m.bands.find(b=>cfg.itLoad>=b.min&&cfg.itLoad<b.max)||m.bands[m.bands.length-1];
+
+  // Stage number mapping (wizard IDs → RIBA integers used by DELIVERABLES)
+  const toRiba = {S1:1, TF:1, S2:2, S3:3, S4:4, S5:5};
+
+  cfg.stages.forEach(sid => {
+    const stgNum = toRiba[sid];
+    if(!stgNum) return;
+
+    // ── MEP scope filtering ─────────────────────────────────────
+    // Electrical-only deliverables suppressed when mech_only
+    const elecOnlyItems = [
+      'mep_pwr_sch','mep_ups_calc','mep_disc_arc','mep_cable','mep_lighting'
+    ];
+    // Mechanical-only deliverables suppressed when elec_only
+    const mechOnlyItems = [
+      'mep_cool_sch','mep_fuel','mep_crit_layout','mep_noncrit_layout'
+    ];
+    if(cfg.scopeId === 'mech_only') {
+      elecOnlyItems.forEach(id => { sc[id+':'+stgNum] = 'EXCL'; });
+    }
+    if(cfg.scopeId === 'elec_only') {
+      mechOnlyItems.forEach(id => { sc[id+':'+stgNum] = 'EXCL'; });
+    }
+
+    // ── CFD scope defaults ──────────────────────────────────────
+    // CFD Analysis items default to included if cfdEnabled
+    if(cfg.cfdEnabled) {
+      if(stgNum === 3) sc['cfd_ext:'+stgNum] = 'Y';  // external at SD
+      if(stgNum === 4) { sc['cfd_ext:'+stgNum] = 'Y'; sc['cfd_int:'+stgNum] = 'Y'; } // both at DD
+    } else {
+      // CFD disabled — exclude both
+      sc['cfd_ext:'+stgNum] = 'EXCL';
+      sc['cfd_int:'+stgNum] = 'EXCL';
+    }
+
+    // ── Band-based suppressions ──────────────────────────────────
+    // Band A (Edge / micro) — suppress hyperscale-scale items
+    if(band.id === 'A') {
+      const hyperscaleOnly = ['mep_pv','mep_disc_arc','strct_gantry'];
+      hyperscaleOnly.forEach(id => { sc[id+':'+stgNum] = 'EXCL'; });
+    }
+    // Band D (Hyperscale) — explicitly include large-scale items
+    if(band.id === 'D') {
+      const hyperscaleInclude = ['mep_pv','mep_disc_arc'];
+      hyperscaleInclude.forEach(id => { sc[id+':'+stgNum] = 'Y'; });
+    }
+
+    // ── Cooling-specific items ───────────────────────────────────
+    // DLC cooling — additional BMS/controls scope
+    const isDLC = cfg.coolingId && cfg.coolingId.startsWith('dlc');
+    if(isDLC && stgNum >= 3) {
+      sc['mep_bms:'+stgNum] = 'Y';
+      sc['mep_soo:'+stgNum] = 'Y';
+    }
+    // Evaporative — PH uplift flag already in matrix; BMS always in scope
+    if(cfg.coolingId === 'evap' && stgNum >= 3) {
+      sc['mep_bms:'+stgNum] = 'Y';
+    }
+  });
+
+  return sc;
+}
+
 function cfgApplyHours(projectId, result, cfg) {
   const ps = getPS(projectId);
 
@@ -2473,19 +2545,49 @@ function cfgApplyHours(projectId, result, cfg) {
   ps.selRoles = roleSet;
   ps.feeExists = true;
 
-  // Apply stage selection
+  // Apply stage selection — set both activeStages (wizard IDs) and selStages (cover page format)
   ps.activeStages = new Set(cfg.stages);
+  // Map wizard stage IDs to cover page stage numbers
+  const _wizardToRiba = {S1:'1',TF:'1',S2:'2',S3:'3',S4:'4',S5:'5'};
+  const _wizardToUK   = {S2:'cd',S3:'sd',S4:'dd'};
+  const isUKfw = (cfg.framework === 'code' || cfg.framework === 'uk');
+  if(isUKfw) {
+    ps.stageFramework = 'uk';
+    ps.selStages = new Set(cfg.stages.map(s=>_wizardToUK[s]).filter(Boolean));
+  } else {
+    ps.stageFramework = 'riba';
+    ps.selStages = new Set(cfg.stages.map(s=>_wizardToRiba[s]).filter(Boolean));
+  }
 
   // Write hours grid
   if(!ps.hours) ps.hours = {};
   result.stageResults.forEach(r=>{
     ps.hours[r.sid] = {...r.roles};
   });
+
+  // Apply scope intelligence defaults from wizard config
+  // Merges into scopeConfig — only sets deviations from DELIVERABLES defaults
+  // LM can override any item on the cover page
+  const scopeDefaults = cfgScopeDefaults(cfg);
+  if(!ps.scopeConfig) ps.scopeConfig = {};
+  // Only apply defaults if this is a fresh generate (don't overwrite LM edits)
+  if(Object.keys(ps.scopeConfig).length === 0) {
+    ps.scopeConfig = scopeDefaults;
+  }
+
+  // Store wizard config for fee calculator and programme reference
+  ps.wizardCfg = {
+    itLoad: cfg.itLoad,
+    coolingId: cfg.coolingId,
+    scopeId: cfg.scopeId,
+    framework: cfg.framework,
+    cfdEnabled: cfg.cfdEnabled,
+  };
 }
 
 function cfgApplyCoversheet(projectId, cfg) {
   const ps = getPS(projectId);
-  ps.stageFrame = cfg.framework;
+  ps.stageFramework = cfg.framework;  // unified key — stageFramework is authoritative
   ps.coolingId  = cfg.coolingId;
   ps.scopeId    = cfg.scopeId;
   const p = PROJECTS[projectId];
@@ -5774,8 +5876,8 @@ function renderBidSection(id){
     }
     if(!_refHintBusy) updateRefHint();
   }
-  // Refresh completion banner if present
-  if(document.getElementById('cfg-completion-banner')) {
+  // Refresh completion banner — always check so it dismisses when all fields complete
+  if(document.getElementById('cfg-completion-banner') || getPS(id).feeExists) {
     cfgShowCompletionBanner(id);
   }
 }
@@ -5994,7 +6096,10 @@ function renderCoverPage(id){
     </div>
     <div class="sh"><span class="sdot" style="background:var(--blue)"></span>Billing</div>
     <div class="fg2">
-      <div class="f"><label>Rate type</label><select><option>Standard bid (2024)</option><option>Framework (2024)</option></select></div>
+      <div class="f"><label>Rate type</label>
+        <select id="cvrtype-${id}" onchange="setCvRateType('${id}',this.value)">
+          ${[['','Select...'],['Standard bid rate (2024)','Standard bid rate (2024)'],['Framework rate (2024)','Framework rate (2024)'],['Negotiated','Negotiated']].map(([v,l])=>'<option value="'+v+'"'+(PROJECTS[id]?.rtype===v?' selected':'')+'>'+l+'</option>').join('')}
+        </select></div>
       <div class="f"><label>Currency</label>
         <select id="cvcur-${id}" onchange="setCurFromCover(this.value)">
           ${['GBP','AED','SAR','EUR','USD'].map(c=>`<option value="${c}"${ps.currency===c?' selected':''}>${c}</option>`).join('')}
@@ -6357,6 +6462,15 @@ function updateDur(id){
   if(td)td.textContent=tot+' weeks';
   if(ee&&tot){const d=getStart(id);d.setDate(d.getDate()+tot*7);ee.textContent=d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
 }
+function setCvRateType(id, val) {
+  const p = PROJECTS[id]; if(!p) return;
+  p.rtype = val;
+  // Sync to Overview dropdown
+  const ov = document.getElementById('ovrtype');
+  if(ov) ov.value = val;
+  mu();
+}
+
 function setCurFromCover(code){
   curCode=code;
   if(currentId)getPS(currentId).currency=code;
