@@ -958,7 +958,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
                         <option value="GBP">GBP</option><option value="AED">AED</option>
                         <option value="SAR">SAR</option><option value="EUR">EUR</option><option value="USD">USD</option>
                       </select>
-                      <input class="fee-inp-num" id="ovefee" type="number" placeholder="e.g. 450000" oninput="mu();updateFeeHint()"/>
+                      <input class="fee-inp-num" id="ovefee" type="number" placeholder="Auto from fee calculator" oninput="mu();updateFeeHint()"/>
                     </div>
                     <div id="ovefee-hint" style="font-size:10px;font-family:var(--fm);color:var(--text3);margin-top:3px;min-height:14px"></div>
                   </div>
@@ -1676,6 +1676,8 @@ const HARDCODED_MATRIX = {
     doc_ctrl_pct_s1:0.03, doc_ctrl_pct_s2:0.04, doc_ctrl_pct_s3:0.06, doc_ctrl_pct_s4:0.07, doc_ctrl_pct_ifc:0.05, doc_ctrl_pct_s5:0.04,
     // CFD rates
     cfd_rate_lead:96.05, cfd_rate_junior:82.13,
+    // Blended rate for fee estimation (£/hr standard bid)
+    blended_rate:95,
   },
   subconsultDefaults:{
     A:['Architecture','Fire & Life Safety'],
@@ -2645,6 +2647,13 @@ function cfgApplyCoversheet(projectId, cfg) {
     }
     // Brief — always write (was edited in step 4)
     if(cfg.brief) p.brief = cfg.brief;
+    // Est. fee — computed from grand total hours × blended rate
+    // Only set if not already manually entered
+    if(!p.efee && cfg._preview) {
+      const blendedRate = CFG_MATRIX.settings.blended_rate || 95;
+      const estFee = Math.round(cfg._preview.grandTotal * blendedRate);
+      p.efee = String(estFee);
+    }
     // Derived fields — auto-populate from wizard data
     // DC type from IT load band
     const _band = CFG_MATRIX.bands.find(b=>cfg.itLoad>=b.min&&cfg.itLoad<b.max)||CFG_MATRIX.bands[CFG_MATRIX.bands.length-1];
@@ -6420,8 +6429,15 @@ function setFramework(id,fw){
   const ps=getPS(id);
   const wasFramework = ps.stageFramework;
   ps.stageFramework = fw;
-  // Only reset selStages if the framework actually changed (don't wipe wizard selection)
-  if(wasFramework !== fw || ps.selStages.size === 0) {
+  // Detect if current selStages are valid for the requested framework
+  const ribaKeys = new Set(['1','2','3','4','5','6','7']);
+  const ukKeys   = new Set(['brief','tf','cd','sd','dd','ca']);
+  const currentKeys = ps.selStages || new Set();
+  const hasRibaStages = [...currentKeys].some(k=>ribaKeys.has(k));
+  const hasUkStages   = [...currentKeys].some(k=>ukKeys.has(k));
+  // Only reset if no valid stages exist for this framework
+  const hasValidStages = fw==='riba' ? hasRibaStages : hasUkStages;
+  if(!hasValidStages) {
     if(fw==='riba') ps.selStages=new Set(['2','3','4']);
     else            ps.selStages=new Set(['cd','sd','dd']);
   }
@@ -6443,7 +6459,7 @@ function buildStageGrid(id){
         ps.selStages.has(s.num)?ps.selStages.delete(s.num):ps.selStages.add(s.num);
         d.classList.toggle('on');d.style.borderColor=ps.selStages.has(s.num)?s.color:'';
         d.style.background=ps.selStages.has(s.num)?`color-mix(in srgb,${s.color} 10%,transparent)`:'';
-        updateDur(id);if(ps.feeExists)rebuildFee(id);renderScopePanel(id);
+        updateDur(id);if(ps.feeExists)rebuildFee(id);renderScopePanel(id);renderSubConsultWrap(id);mu();
       };
       d.innerHTML=`<div class="rsn" style="color:${s.color}">${s.label}</div><div class="rsname">${s.name}</div>
         <div class="rswk"><input type="number" id="wks-${id}-${s.num}" value="${s.wks}" min="1" max="99"
@@ -6471,7 +6487,7 @@ function buildRibaGrid(id){
       d.classList.toggle('on');d.style.borderColor=ps.selStages.has(s.num)?hex:'';
       d.style.background=ps.selStages.has(s.num)?`color-mix(in srgb,${hex} 10%,transparent)`:'';
       updateDur(id);if(ps.feeExists)rebuildFee(id);
-      renderScopePanel(id);
+      renderScopePanel(id);renderSubConsultWrap(id);mu();
     };
     d.innerHTML=`<div class="rsn" style="color:${hex}">S${s.num}</div><div class="rsname">${s.name}</div>
       <div class="rswk"><input type="number" id="wks-${id}-${s.num}" value="${s.wks}" min="1" max="99"
