@@ -2103,7 +2103,7 @@ function cfgStep1(body, sub) {
         <label style="${_cfgLblStyle}">Contact phone</label>
         <div style="display:flex;gap:6px">
           <select id="cfg-contact-cc" style="padding:8px 6px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text);flex-shrink:0;width:110px">
-            ${['+971 AE','+966 SA','+974 QA','+973 BH','+965 KW','+968 OM','+44 GB','+1 US','+33 FR','+49 DE','+31 NL','+65 SG'].map(o=>{const[code,flag]=o.split(' ');return \`<option value="\${code}" \${(_cfg.contactPhoneCC||'+971')===code?'selected':''}>\${code} (\${flag})</option>\`;}).join('')}
+            ${(()=>{const ccs=[["+971","AE"],["+966","SA"],["+974","QA"],["+973","BH"],["+965","KW"],["+968","OM"],["+44","GB"],["+1","US"],["+33","FR"],["+49","DE"],["+31","NL"],["+65","SG"]];return ccs.map(([code,flag])=>"<option value=\""+code+"\" "+((_cfg.contactPhoneCC||"+971")===code?"selected":"")+">"+ code+" ("+flag+")</option>").join("");})()}
           </select>
           <input id="cfg-contact-phone" type="tel" placeholder="50 123 4567" value="${_cfg.contactPhone||''}"
             style="flex:1;padding:8px 10px;font-size:12px;font-family:var(--fm);background:var(--inp);border:1px solid var(--border2);border-radius:5px;color:var(--text)"/>
