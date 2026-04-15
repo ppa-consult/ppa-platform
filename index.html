@@ -2442,6 +2442,7 @@ async function cfgCreateProject(cfg) {
   PROJECTS[newId] = {
     id:newId, ref, name, status:'Opportunity',
     lmgr:lm,
+    bmgr:cfg.lmgr||currentProfile?.name||'',
     company:cfg.company||'',
     client:cfg.contactName||'',
     crole:cfg.contactRole||'',
@@ -2520,8 +2521,9 @@ function cfgApplyCoversheet(projectId, cfg) {
       },0);
       if(_totalWeeks) p.tline = String(_totalWeeks);
     }
-    // Bid manager = current logged-in user
-    if(!p.bmgr && currentProfile?.name) p.bmgr = currentProfile.name;
+    // Bid manager = Lead Manager selected in wizard (the LM who owns the bid)
+    // Falls back to current user only if no LM was selected
+    if(!p.bmgr) p.bmgr = cfg.lmgr || currentProfile?.name || '';
     // Fee currency from current selection
     if(!p.feecur) p.feecur = curCode||'GBP';
   }
@@ -2538,6 +2540,7 @@ function cfgShowCompletionBanner(projectId) {
   if(!p.client)                   missing.push({label:'Contact name', field:'ovclient'});
   if(!p.loc)                      missing.push({label:'Location', field:'ovloc'});
   if(!p.src)                      missing.push({label:'Lead source', field:'ovsrc'});
+  if(!p.btype)                    missing.push({label:'Appointment type', field:'ovbtype'});
   if(!p.ddl)                      missing.push({label:'Bid deadline', field:'ovddl'});
   if(!p.rtype)                    missing.push({label:'Contract type', field:'ovrtype'});
 
@@ -5467,9 +5470,10 @@ function loadProject(id,cardEl){
 
   // Populate overview — data persists from PROJECTS object
   setV('ovref',p.ref);setV('ovtitle',p.name);setV('ovloc',p.loc||'');
-  // Auto-set bid manager if blank and we know the current user
-  if(!p.bmgr && currentProfile?.name) {
-    p.bmgr = currentProfile.name;
+  // Auto-set bid manager to Lead Manager if blank
+  // Bid Manager = the LM who owns the bid, not necessarily who is logged in
+  if(!p.bmgr && p.lmgr) {
+    p.bmgr = p.lmgr;
   }
   setV('ovlmgr',p.lmgr||'');setV('ovsrc',p.src||'');
   setNum('ovmw',p.mw||'');setNum('ovit',p.it||'');
