@@ -1894,7 +1894,7 @@ function openCfgModal(mode='new', projectId=null) {
     const p  = PROJECTS[projectId];
     const ps = getPS(projectId);
     _cfg.itLoad       = parseFloat(p.it||p.mw||0)||null;
-    _cfg.framework    = ps.stageFramework||'riba';
+    _cfg.framework    = (ps.stageFramework === 'uk') ? 'code' : (ps.stageFramework||'riba');
     _cfg.coolingId    = ps.coolingId||'air';
     _cfg.scopeId      = ps.scopeId||'full_mep';
     _cfg.lmgr         = p.lmgr||'';
@@ -2624,7 +2624,7 @@ function cfgApplyHours(projectId, result, cfg) {
 
 function cfgApplyCoversheet(projectId, cfg) {
   const ps = getPS(projectId);
-  ps.stageFramework = cfg.framework;  // unified key — stageFramework is authoritative
+  ps.stageFramework = (cfg.framework === 'code') ? 'uk' : cfg.framework;  // normalise 'code' → 'uk'
   ps.coolingId  = cfg.coolingId;
   ps.scopeId    = cfg.scopeId;
   const p = PROJECTS[projectId];
