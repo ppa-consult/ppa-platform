@@ -6190,8 +6190,30 @@ function renderCoverPage(id){
       <span style="font-size:10px;font-family:var(--fm);color:var(--text3);font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px">Defaults from stage selection — override any item or add custom deliverables</span>
     </div>
     <div class="scope-panel" id="scope-panel-${id}"></div>
+    <div id="cv-debug-${id}"></div>
   </div>`;
   buildStageGrid(id);updateDur(id);renderScopePanel(id);renderSubConsultWrap(id);
+  // ── DEBUG PANEL (remove after troubleshooting) ──
+  const _dbg = document.getElementById('cv-debug-'+id);
+  if(_dbg) {
+    const ps_ = getPS(id);
+    const m_ = CFG_MATRIX;
+    const band_ = m_.bands.find(b=>PROJECTS[id]?.it>=b.min&&PROJECTS[id]?.it<b.max)||m_.bands[1];
+    _dbg.innerHTML = `<div style="margin-top:14px;padding:10px 12px;background:rgba(0,0,0,.05);border:1px solid var(--border);border-radius:6px;font-size:10px;font-family:monospace;line-height:1.7;color:var(--text2)">
+      <b>DEBUG — cover page state</b><br/>
+      stageFramework: <b>${ps_.stageFramework||'—'}</b><br/>
+      selStages: <b>${ps_.selStages?[...ps_.selStages].join(', '):'—'}</b> (size: ${ps_.selStages?.size??'no Set'})<br/>
+      subConsultants: <b>${(ps_.subConsultants||[]).join(', ')||'EMPTY'}</b><br/>
+      scopeConfig keys: <b>${Object.keys(ps_.scopeConfig||{}).length}</b><br/>
+      feeExists: <b>${ps_.feeExists}</b><br/>
+      wizardCfg: <b>${ps_.wizardCfg?JSON.stringify(ps_.wizardCfg).slice(0,80)+'…':'null'}</b><br/>
+      band (from IT load ${PROJECTS[id]?.it||'?'}MW): <b>${band_?.id||'?'} — ${band_?.label||'?'}</b><br/>
+      cfgSubConsultDefaults result: <b>${ps_.wizardCfg?cfgSubConsultDefaults(ps_.wizardCfg).join(', '):'no wizardCfg'}</b><br/>
+      cv-subconsult-wrap exists: <b>${!!document.getElementById('cv-subconsult-wrap-${id}')}</b><br/>
+      scope-panel exists: <b>${!!document.getElementById('scope-panel-${id}')}</b><br/>
+      UK_STAGES: <b>${UK_STAGES.map(s=>s.num).join(', ')}</b>
+    </div>`;
+  }
 }
 
 // Track which stage accordions are open across re-renders
