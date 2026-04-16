@@ -1678,6 +1678,18 @@ const HARDCODED_MATRIX = {
     doc_ctrl_pct_s1:0.03, doc_ctrl_pct_s2:0.04, doc_ctrl_pct_s3:0.06, doc_ctrl_pct_s4:0.07, doc_ctrl_pct_ifc:0.05, doc_ctrl_pct_s5:0.04,
     // CFD rates
     cfd_rate_lead:96.05, cfd_rate_junior:82.13,
+    // ICT & Security as % of MEP engineering hours (by band — pending Jeff review)
+    ict_sec_pct_A:0.10, ict_sec_pct_B:0.18, ict_sec_pct_C:0.22, ict_sec_pct_D:0.20,
+    // ICT split (of ict_sec hours): ict vs security
+    ict_share:0.55, sec_share:0.45,
+    // Role splits within ICT hours
+    ict_lead:0.20, ict_assoc:0.15, ict_sr:0.40, ict_eng:0.25,
+    // Role splits within Security hours
+    sec_lead:0.20, sec_assoc:0.15, sec_sr:0.40, sec_eng:0.25,
+    // Stage weighting for ICT (% of total ICT hours per stage key)
+    // Pending engineering review — currently estimated
+    ict_pct_s1:0.15, ict_pct_tf:0.05, ict_pct_s2:0.25, ict_pct_s3:0.35, ict_pct_s4:0.20, ict_pct_s5:0.05,
+    sec_pct_s1:0.20, sec_pct_tf:0.05, sec_pct_s2:0.25, sec_pct_s3:0.30, sec_pct_s4:0.20, sec_pct_s5:0.05,
     // Blended rate for fee estimation (£/hr standard bid)
     blended_rate:95,
   },
@@ -1858,6 +1870,32 @@ function calculateFeeEstimate(cfg) {
     const bimSr  = Math.round(bimHrs * m.settings.bim_sr);
     const bimJr  = Math.round(bimHrs * m.settings.bim_jr);
 
+    // ICT & Security hours (only when selected — securityMode inhouse or both)
+    // Estimated as % of MEP engineering hours, split by stage weighting
+    // ⚠ PENDING ENGINEERING REVIEW — ratios from initial estimate
+    const _ictSecEnabled = cfg.securityMode === 'inhouse' || cfg.securityMode === 'both';
+    let ictLead=0,ictAssoc=0,ictSr=0,ictEng=0;
+    let secLead=0,secAssoc=0,secSr=0,secEng=0;
+    if(_ictSecEnabled) {
+      const _bandId = band.id;
+      const _ictSecPct = m.settings['ict_sec_pct_'+_bandId] || 0.18;
+      const _totalIctSec = Math.round(engHrs * _ictSecPct * durAdj);
+      const _stgKey = 'ict_pct_'+sid.toLowerCase();
+      const _stgSecKey = 'sec_pct_'+sid.toLowerCase();
+      const _ictPct = m.settings[_stgKey] !== undefined ? m.settings[_stgKey] : 0.25;
+      const _secPct = m.settings[_stgSecKey] !== undefined ? m.settings[_stgSecKey] : 0.25;
+      const ictHrs = Math.round(_totalIctSec * (m.settings.ict_share||0.55) * _ictPct * 4); // ×4 since pct is of total not stage
+      const secHrs = Math.round(_totalIctSec * (m.settings.sec_share||0.45) * _secPct * 4);
+      ictLead  = Math.round(ictHrs * (m.settings.ict_lead||0.20));
+      ictAssoc = Math.round(ictHrs * (m.settings.ict_assoc||0.15));
+      ictSr    = Math.round(ictHrs * (m.settings.ict_sr||0.40));
+      ictEng   = Math.round(ictHrs * (m.settings.ict_eng||0.25));
+      secLead  = Math.round(secHrs * (m.settings.sec_lead||0.20));
+      secAssoc = Math.round(secHrs * (m.settings.sec_assoc||0.15));
+      secSr    = Math.round(secHrs * (m.settings.sec_sr||0.40));
+      secEng   = Math.round(secHrs * (m.settings.sec_eng||0.25));
+    }
+
     const roles = {
       proj_dir:  pd,
       sr_dpm:    srDpm,
@@ -1874,6 +1912,14 @@ function calculateFeeEstimate(cfg) {
       bim_mgr:   bimMgr,
       sr_bim:    bimSr,
       bim_tech:  bimJr,
+      ...(ictLead > 0  ? {ict_lead:ictLead}   : {}),
+      ...(ictAssoc > 0 ? {ict_assoc:ictAssoc}  : {}),
+      ...(ictSr > 0    ? {ict_sr:ictSr}        : {}),
+      ...(ictEng > 0   ? {ict_eng:ictEng}      : {}),
+      ...(secLead > 0  ? {sec_lead:secLead}    : {}),
+      ...(secAssoc > 0 ? {sec_assoc:secAssoc}  : {}),
+      ...(secSr > 0    ? {sec_sr:secSr}        : {}),
+      ...(secEng > 0   ? {sec_eng:secEng}      : {}),
     };
 
     // CFD: cost → hours via blended rate
@@ -1903,7 +1949,7 @@ const _cfgDefault = () => ({
   // Step 1
   title:'', company:'', contactName:'', contactRole:'', contactEmail:'', contactPhone:'',
   location:'', lmgr:'', building:'', src:'', brief:'', contactPhoneCC:'+971',
-  itLoad:null, coolingId:'air', scopeId:'full_mep', dcType:'standard', framework:'riba',
+  itLoad:null, coolingId:'air', scopeId:'full_mep', dcType:'standard', securityMode:'inhouse', framework:'riba',
   // Step 2
   stages:[], durations:{},
   // Step 3
@@ -2013,8 +2059,10 @@ function cfgSaveStep(step) {
     _cfg.itLoad    = parseFloat(document.getElementById('cfg-it')?.value||0)||null;
     _cfg.coolingId = document.getElementById('cfg-cooling')?.value||'air';
     _cfg.scopeId   = document.getElementById('cfg-scope')?.value||'full_mep';
-    _cfg.dcType    = document.getElementById('cfg-dctype')?.value||'standard';
-    _cfg.framework = document.querySelector('input[name="cfg-frame"]:checked')?.value||'riba';
+    _cfg.dcType      = document.getElementById('cfg-dctype')?.value||'standard';
+    _cfg.framework   = document.querySelector('input[name="cfg-frame"]:checked')?.value||'riba';
+    // Pass current security mode so ICT/Security hours are estimated correctly
+    if(currentId) _cfg.securityMode = getPS(currentId).securityMode || 'inhouse';
     if(_cfg.mode==='new') {
       _cfg.title        = (document.getElementById('cfg-title')?.value||'').trim();
       _cfg.company      = (document.getElementById('cfg-company')?.value||'').trim();
@@ -2744,6 +2792,7 @@ function cfgApplyHours(projectId, result, cfg) {
     coolingId: cfg.coolingId,
     scopeId: cfg.scopeId,
     dcType: cfg.dcType || 'standard',
+    securityMode: cfg.securityMode || 'inhouse',
     framework: cfg.framework,
     cfdEnabled: cfg.cfdEnabled,
   };
@@ -6356,6 +6405,10 @@ function renderCoverPage(id){
     // Recover subConsultants if empty
     if(!ps.subConsultants || ps.subConsultants.length === 0) {
       ps.subConsultants = cfgSubConsultDefaults(wc);
+    }
+    // Recover securityMode from wizardCfg if not set
+    if(!ps.securityMode && wc.securityMode) {
+      ps.securityMode = wc.securityMode;
     }
   }
   if(ps.currency&&ps.currency!==curCode){
