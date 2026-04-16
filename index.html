@@ -3116,9 +3116,14 @@ function scopeDefault(item,selStages){
 // Get effective scope state for an item at a specific stage
 function getScope(ps,item,stageNum){
   const key=`${item.id}:${stageNum}`;
+  // 1. Check explicit override in scopeConfig
   if(ps.scopeConfig&&ps.scopeConfig[key]!==undefined)return ps.scopeConfig[key];
-  // Default: N — user must explicitly mark items In
-  return 'N';
+  // 2. Fall back to DELIVERABLES matrix default for this stage
+  //    Y_/P_/R_ in DELIVERABLES = included by default
+  //    N_/undefined = not applicable at this stage
+  const matrixVal = item.stages[stageNum];
+  if(matrixVal && matrixVal !== N_) return 'Y';  // included by default
+  return 'N';  // not applicable at this stage
 }
 
 // After stage selection changes, clear overrides where default now differs
@@ -6257,8 +6262,8 @@ function renderCoverPage(id){
     <div class="scope-panel" id="scope-panel-${id}"></div>
     <div id="cv-debug-${id}"></div>
   </div>`;
-  // Use requestAnimationFrame to ensure innerHTML is committed to DOM before rendering into it
-  requestAnimationFrame(()=>{
+  // Use setTimeout(0) to yield to browser layout engine before rendering into the newly set innerHTML
+  setTimeout(()=>{
     buildStageGrid(id);
     updateDur(id);
     renderScopePanel(id);
