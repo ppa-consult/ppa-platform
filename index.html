@@ -864,7 +864,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
                 <div class="f" style="grid-column:1/-1"><label>Lead title</label><input id="ovtitle" placeholder="e.g. Dubai Edge DC Cluster" oninput="mu()"/></div>
                 <div class="f"><label>Location</label><input id="ovloc" placeholder="e.g. Dubai, UAE" oninput="mu()"/></div>
                 <div class="f"><label>Lead source</label>
-                  <select id="ovsrc" onchange="mu()">
+                  <select id="ovsrc" onchange="mu();_silentSave=true;saveChanges();">
                     <option value="">Select…</option>
                     <option>Direct client</option><option>Framework</option><option>Referral</option>
                     <option>Tender portal</option><option>Conference / event</option><option>Repeat client</option>
@@ -932,13 +932,13 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
                       <option>Edge / micro (1–10MW)</option><option>Modular</option><option>Mixed / campus</option>
                     </select></div>
                   <div class="f"><label>Appointment type</label>
-                    <select id="ovbtype" onchange="mu()">
+                    <select id="ovbtype" onchange="mu();_silentSave=true;saveChanges();">
                       <option value="">Select…</option>
                       <option>Competitive tender</option><option>Direct appointment</option>
                       <option>Framework call-off</option><option>Negotiated</option>
                     </select></div>
                   <div class="f"><label>Rate type</label>
-                    <select id="ovrtype" onchange="mu()">
+                    <select id="ovrtype" onchange="mu();_silentSave=true;saveChanges();">
                       <option value="">Select…</option>
                       <option>Standard bid rate (2024)</option><option>Framework rate (2024)</option>
                     </select></div>
@@ -948,7 +948,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
                       <option>T. Ryan</option><option>A. Tizard</option><option>D. Watts</option>
                       <option>J. Phillips</option><option>B. Whitfield</option><option>J. Fox</option>
                     </select></div>
-                  <div class="f"><label>Submission deadline</label><input type="date" id="ovddl" oninput="mu()"/></div>
+                  <div class="f"><label>Submission deadline</label><input type="date" id="ovddl" oninput="mu();_silentSave=true;saveChanges();"/></div>
                   <div class="f" style="grid-column:1/-1"><label>Sub-consultants</label>
                     <div id="ov-subconsult-wrap" style="margin-top:4px"></div></div>
                   <div class="f"><label>Est. timeline (weeks)</label><input id="ovtline" type="number" placeholder="e.g. 72" oninput="mu()"/></div>
@@ -5786,7 +5786,8 @@ function saveChanges(){
   renderStagePanel(currentId);
   renderTabs(currentId);
   saveProjectToSupabase(currentId);
-  toast('Saved');
+  if(!_silentSave) toast('Saved');
+  _silentSave = false;
 }
 
 // ══ TAB GUARD & SWITCHING ══════════════════════════════════
@@ -5830,6 +5831,7 @@ function hasRealPPACode(id){
   return /^PPA\d+$/.test((p.ref||'').trim());
 }
 let _refHintBusy=false;
+let _silentSave=false;
 let _inEditMode=false; // true when user clicked Edit Proposal on a Proposal/Neg/Live project
 function updateRefHint(){
   // Update banner when ref changes (most common first unlock action)
