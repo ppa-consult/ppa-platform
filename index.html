@@ -817,7 +817,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
           <div class="dname" id="dpname">—</div>
           <div class="dref" id="dpref">—</div>
         </div>
-        <button id="build-fee-btn" class="btn bp bsm" style="display:none" onclick="buildFeeFromHeader()" title="Open blank fee calculator grid — use ⚡ Fee Estimate to auto-populate hours">Build fee calculator →</button>
         <button id="cfg-estimate-btn" class="btn bg bsm" onclick="openCfgModal('existing',currentId)" style="border:1px solid var(--accent);color:var(--accent);background:transparent;display:none" title="Auto-generate fee estimate from DC matrix">⚡ Fee Estimate</button>
         <button class="btn bp bsm" onclick="saveChanges()">Save</button>
       </div>
@@ -6277,7 +6276,7 @@ function updateRefHint(){
 // ══ UNIFIED GATE LOGIC ════════════════════════════════════════
 // Single authority on tab unlock state — all consumers call this
 function getTabGates(id) {
-  if(!id || !PROJECTS[id]) return {coverPage:false,feeCalc:false,programme:false,proposal:false,feeBtn:false,buildFeeBtn:false};
+  if(!id || !PROJECTS[id]) return {coverPage:false,feeCalc:false,programme:false,proposal:false,feeBtn:false};
   const p    = PROJECTS[id];
   const pipe = getPipe(id);
   const ps   = getPS(id);
@@ -6292,7 +6291,6 @@ function getTabGates(id) {
     programme:    r >= 2 && ps.feeExists,
     proposal:     r >= 2 && allTabsComplete(id),
     feeBtn:       r >= 2 && r < 4 && !isProposalStage,
-    buildFeeBtn:  r >= 2 && ps.cvVisited && ps.selRoles.size > 0 && !ps.feeExists && !isProposalStage,
     showSummary:  isProposalStage && !_inEditMode,
   };
 }
@@ -6318,8 +6316,6 @@ function renderTabs(id){
   setTabAccess('tab-ps','tp-ps',gates.proposal,'Complete Cover page, Fee calculator, and Programme first');
 
   // Build fee button
-  const buildBtn = document.getElementById('build-fee-btn');
-  if(buildBtn) buildBtn.style.display = gates.buildFeeBtn ? '' : 'none';
 
   // Fee Estimate button — visible only at rank 2-3, not Proposal+
   const feeEstBtn = document.getElementById('cfg-estimate-btn');
@@ -6347,18 +6343,7 @@ function renderTabs(id){
   renderContactBlock(id);
   renderBidSection(id);
 }
-function buildFeeFromHeader(){
-  if(!currentId)return;
-  const ps=getPS(currentId);
-  if(!ps.selRoles.size){toast('Select at least one role on Role selection first');return;}
-  if(!ps.cvVisited){toast('Complete Cover page first');return;}
-  // Warn if hours already exist — this will wipe them
-  if(ps.feeExists && Object.keys(ps.feeVals||{}).length > 0){
-    if(!confirm('This will reset the fee calculator and clear all existing hours.\n\nIf you have a fee estimate, use \'⚡ Fee Estimate\' instead to re-run it.\n\nContinue and reset?')) return;
-  }
-  buildFeeFromRoles(currentId);
-  renderTabs(currentId);
-}
+
 function setTabAccess(tabId,tpId,ok,hint){
   const tab=document.getElementById(tabId);if(!tab)return;
   if(ok){tab.classList.remove('locked');tab.onclick=()=>trySwitch(tab,tpId);}
@@ -7577,7 +7562,12 @@ function rebuildFee(id){
     <div class="fee-wrap">
       <div class="fee-toolbar">
         <span style="font-size:11px;color:var(--text3);font-family:var(--fm)">Click a stage header to expand weekly view. All hours start at 0 — enter as needed.</span>
-        <span style="margin-left:auto;font-family:var(--fm);font-size:11px;color:var(--text3)">${curCode} · Standard 2024</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
+          <button onclick="clearFeeHours('${id}')"
+            style="font-size:11px;font-family:var(--fm);background:none;border:1px solid var(--border2);color:var(--text3);padding:3px 10px;border-radius:4px;cursor:pointer"
+            title="Clear all hours and reset fee calculator">Clear hours</button>
+          <span style="font-family:var(--fm);font-size:11px;color:var(--text3)">${curCode} · Standard 2024</span>
+        </span>
       </div>
       <div class="fee-scroll"><table class="ftbl" id="fee-tbl-${id}">${H+B+F}</table></div>
     </div>
@@ -7590,6 +7580,15 @@ function rebuildFee(id){
   </div>`;
   syncGanttData(id);renderTabs(id);
   renderSubFeeTable(id);updateGrandTotal(id);
+}
+
+function clearFeeHours(id){
+  if(!confirm('Clear all hours from the fee calculator?\n\nThis cannot be undone. Use ⚡ Fee Estimate to re-populate from the wizard.')) return;
+  const ps=getPS(id);
+  ps.feeVals={};ps.feeWkVals={};ps.manCellsSet=new Set();ps.expandedStage=null;
+  rebuildFee(id);
+  saveProjectToSupabase(id);
+  toast('Fee calculator cleared');
 }
 
 function toggleFeeStage(id,snum){
