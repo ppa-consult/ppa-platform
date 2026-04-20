@@ -856,7 +856,18 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
               <div class="fg2">
                 <div class="f" style="grid-column:1/-1">
                   <label id="ovref-label">Reference</label>
-                  <input id="ovref" class="ro" readonly oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'');mu();updateRefHint()" 
+                  <input id="ovref" class="ro" readonly
+                    onfocus="if(this.value==='')this.value='PPA'"
+                    oninput="
+                      let v=this.value.toUpperCase();
+                      if(!v.startsWith('PPA'))v='PPA'+(v.replace(/^P{0,2}P?P?A?/,''));
+                      v='PPA'+v.slice(3).replace(/[^0-9]/g,'');
+                      this.value=v;
+                      mu();updateRefHint();
+                    "
+                    onkeydown="
+                      if((this.selectionStart<=3||this.selectionEnd<=3)&&(event.key==='Backspace'||event.key==='Delete')){event.preventDefault();}
+                    " 
                     style="font-family:var(--fm);font-weight:600" placeholder="e.g. PPA260798"/>
                   <div id="ovref-hint" style="font-size:10px;margin-top:3px;display:none"></div>
                 </div>
@@ -1072,6 +1083,7 @@ function stateToRow(id){
     sel_stages:   ps.selStages ? [...ps.selStages] : [],
     sel_roles:    ps.selRoles  ? [...ps.selRoles]  : [],
     fee_vals:     ps.feeVals   || {},
+    estimate_out_of_date: ps.estimateOutOfDate || false,
     fee_wk_vals:  ps.feeWkVals || {},
     man_cells_set: ps.manCellsSet ? [...ps.manCellsSet] : [],
     fee_exists:   ps.feeExists  || false,
@@ -1088,7 +1100,7 @@ function stateToRow(id){
     sub_fees:     ps.subFees   || {},
     wizard_cfg:   ps.wizardCfg  || null,
     review_wks:   ps.reviewWks || {},
-    security_mode: ps.securityMode || 'inhouse',
+    security_mode: ps.securityMode || 'ppa_delivered',
     milestones:   ps.milestones || [],
     stage_data:   ps.stageData || {},
   };
@@ -1127,6 +1139,7 @@ function rowToState(row){
     selStages:   new Set(row.sel_stages||[]),
     selRoles:    new Set(row.sel_roles||[]),
     feeVals:     row.fee_vals||{},
+    estimateOutOfDate: row.estimate_out_of_date || false,
     feeWkVals:   row.fee_wk_vals||{},
     manCellsSet: new Set(row.man_cells_set||[]),
     feeExists:   row.fee_exists||false,
@@ -1143,7 +1156,7 @@ function rowToState(row){
     subFees:     row.sub_fees||{},
     wizardCfg:   row.wizard_cfg||null,
     reviewWks:   row.review_wks||{},
-    securityMode: row.security_mode||'inhouse',
+    securityMode: row.security_mode||'ppa_delivered',
     milestones:  row.milestones||[],
     stageData:   row.stage_data||{},
   };
@@ -1873,7 +1886,7 @@ function calculateFeeEstimate(cfg) {
     // ICT & Security hours (only when selected — securityMode inhouse or both)
     // Estimated as % of MEP engineering hours, split by stage weighting
     // ⚠ PENDING ENGINEERING REVIEW — ratios from initial estimate
-    const _ictSecEnabled = cfg.securityMode === 'inhouse' || cfg.securityMode === 'both';
+    const _ictSecEnabled = cfg.securityMode === 'ppa_delivered' || cfg.securityMode === 'split_scope';
     let ictLead=0,ictAssoc=0,ictSr=0,ictEng=0;
     let secLead=0,secAssoc=0,secSr=0,secEng=0;
     if(_ictSecEnabled) {
@@ -1949,7 +1962,7 @@ const _cfgDefault = () => ({
   // Step 1
   title:'', company:'', contactName:'', contactRole:'', contactEmail:'', contactPhone:'',
   location:'', lmgr:'', building:'', src:'', brief:'', contactPhoneCC:'+971',
-  itLoad:null, coolingId:'air', scopeId:'full_mep', dcType:'standard', securityMode:'inhouse', framework:'riba',
+  itLoad:null, coolingId:'air', scopeId:'full_mep', dcType:'standard', securityMode:'ppa_delivered', framework:'riba',
   // Step 2
   stages:[], durations:{},
   // Step 3
@@ -1960,10 +1973,55 @@ const _cfgDefault = () => ({
 let _cfg = _cfgDefault();
 
 // ── 5. OPEN / CLOSE ──────────────────────────────────────────
+
+// ── Wizard draft persistence (localStorage) ──────────────────
+function _wDraftKey() {
+  return 'ppa_wizard_draft_' + (currentUser?.id || 'anon');
+}
+function _wSaveDraft() {
+  try {
+    const draft = {
+      _cfg: Object.assign({}, _cfg, {_preview:null}), // don't save preview blob
+      _saved: new Date().toISOString(),
+      _projectName: _cfg.title || _cfg.company || 'Untitled estimate',
+    };
+    localStorage.setItem(_wDraftKey(), JSON.stringify(draft));
+  } catch(e) { /* storage may be full */ }
+}
+function _wClearDraft() {
+  try { localStorage.removeItem(_wDraftKey()); } catch(e) {}
+}
+function _wLoadDraft() {
+  try {
+    const raw = localStorage.getItem(_wDraftKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+
 function openCfgModal(mode='new', projectId=null) {
   _cfg = _cfgDefault();
   _cfg.mode = mode;
   _cfg.projectId = projectId;
+
+  // Check for saved draft on new project wizard
+  if(mode==='new') {
+    const draft = _wLoadDraft();
+    if(draft && draft._cfg && draft._saved) {
+      const age = Math.round((Date.now()-new Date(draft._saved).getTime())/60000);
+      const ageStr = age < 60 ? `${age} min ago` : `${Math.round(age/60)} hr ago`;
+      const resume = confirm(
+        `Resume previous estimate?\n\n"${draft._projectName}" — saved ${ageStr}\n\nClick OK to resume, Cancel to start fresh.`
+      );
+      if(resume) {
+        Object.assign(_cfg, draft._cfg);
+        document.getElementById('cfg-modal').style.display='flex';
+        cfgRender();
+        return;
+      } else {
+        _wClearDraft(); // user chose fresh start — clear the draft
+      }
+    }
+  }
 
   if(mode==='existing' && projectId && PROJECTS[projectId]) {
     const p  = PROJECTS[projectId];
@@ -1992,6 +2050,7 @@ function openCfgModal(mode='new', projectId=null) {
 function closeCfgModal() {
   document.getElementById('cfg-modal').style.display='none';
   _cfg = _cfgDefault();
+  // Note: draft is NOT cleared on close — preserved for resume
 }
 
 // ── 6. ORCHESTRATOR ──────────────────────────────────────────
@@ -1999,6 +2058,7 @@ function cfgNext() {
   const err = cfgValidateStep(_cfg.step);
   if(err) { cfgShowError(err); return; }
   cfgSaveStep(_cfg.step);
+  _wSaveDraft(); // persist draft to localStorage
   // Skip step 3 if CFD disabled
   if(_cfg.step===2 && !_cfg.cfdEnabled) {
     _cfg.step = 4;
@@ -2062,7 +2122,7 @@ function cfgSaveStep(step) {
     _cfg.dcType      = document.getElementById('cfg-dctype')?.value||'standard';
     _cfg.framework   = document.querySelector('input[name="cfg-frame"]:checked')?.value||'riba';
     // Pass current security mode so ICT/Security hours are estimated correctly
-    if(currentId) _cfg.securityMode = getPS(currentId).securityMode || 'inhouse';
+    _cfg.securityMode = (currentId ? getPS(currentId).securityMode : null) || 'ppa_delivered';
     if(_cfg.mode==='new') {
       _cfg.title        = (document.getElementById('cfg-title')?.value||'').trim();
       _cfg.company      = (document.getElementById('cfg-company')?.value||'').trim();
@@ -2501,6 +2561,7 @@ function cfgStep4(body, sub) {
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${cool.label}</span>
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${_cfg.scopeId==='full_mep'?'Full MEP':_cfg.scopeId==='mech_only'?'Mechanical only':'Electrical only'}</span>
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${_cfg.stages.length} stage${_cfg.stages.length!==1?'s':''}</span>
+        <span style="background:rgba(232,89,60,.15);color:#c04030;padding:2px 8px;border-radius:8px;font-weight:600">${({standard:'Standard Enterprise',ai_hpc:'AI / HPC',hyperscale:'Hyperscale',colocation:'Colocation',edge:'Edge / Micro',district:'District Cooling'})[_cfg.dcType||'standard']}</span>
       </div>
     </div>
     <div style="overflow-x:auto;margin-bottom:4px">
@@ -2532,6 +2593,14 @@ async function cfgGenerate() {
     if(!projectId) throw new Error('Failed to create project');
 
     // B. Apply hours to fee calculator
+    // Confirm before overwriting existing manual fee edits
+    const _existingFee = getPS(projectId).feeExists &&
+                         Object.keys(getPS(projectId).feeVals||{}).length > 0;
+    if(_existingFee) {
+      if(!confirm('Re-generating will replace all current hours in the fee calculator, including any manual edits.\n\nContinue?')) {
+        cfgClose();return;
+      }
+    }
     cfgApplyHours(projectId, result, _cfg);
 
     // C. Pre-fill coversheet fields
@@ -2570,10 +2639,21 @@ async function cfgGenerate() {
     await new Promise(r=>setTimeout(r,300));
     const dp = document.getElementById('detail-panel');
     if(dp) dp.scrollIntoView({behavior:'smooth',block:'start'});
+    // Scroll to Overview tab specifically (first tab in detail panel)
+    setTimeout(()=>{
+      const ovTab = document.querySelector('.tab-btn[onclick*="ov"]') ||
+                    document.querySelector('.tab-btn');
+      if(ovTab) ovTab.click();
+    }, 250);
 
-    // G. Show banner after panel renders
-    setTimeout(()=>cfgShowCompletionBanner(projectId), 500);
+    // G. Show banner + highlight incomplete fields after panel renders
+    setTimeout(()=>{
+      cfgShowCompletionBanner(projectId);
+      applyFieldHighlights(projectId);
+    }, 500);
 
+    _wClearDraft(); // estimate complete — clear the draft
+    getPS(projectId).estimateOutOfDate = false;
     toast(`Fee estimate generated — ${result.grandTotal.toLocaleString()} hrs across ${_cfg.stages.length} stage${_cfg.stages.length!==1?'s':''}`);
 
   } catch(e) {
@@ -2728,6 +2808,11 @@ function cfgApplyHours(projectId, result, cfg) {
   ps.selRoles = roleSet;
   ps.feeExists = true;
 
+  // Warn if overwriting existing manual fee edits
+  const _hasManuFee = ps.feeExists && Object.keys(ps.feeVals||{}).length > 0;
+  // (Confirmation already handled in cfgGenerate before calling this — flag is set)
+  // This function always proceeds — confirm guard is upstream
+
   // Apply stage selection — set both activeStages (wizard IDs) and selStages (cover page format)
   ps.activeStages = new Set(cfg.stages);
   // Map wizard stage IDs to cover page stage numbers
@@ -2780,8 +2865,8 @@ function cfgApplyHours(projectId, result, cfg) {
   }
   // Add ICT/Security roles to selRoles if selected as in-house on cover page
   // (Quick estimate doesn't calculate these — LM enters hours manually in fee calculator)
-  const _secMode_ = ps.securityMode || 'inhouse';
-  if(_secMode_ === 'inhouse' || _secMode_ === 'both') {
+  const _secMode_ = ps.securityMode || 'ppa_delivered';
+  if(_secMode_ === 'ppa_delivered' || _secMode_ === 'split_scope') {
     ['ict_lead','ict_assoc','sec_lead','sec_assoc'].forEach(rid => ps.selRoles.add(rid));
   }
   // State is saved by cfgGenerate after projects row is confirmed written
@@ -2792,7 +2877,7 @@ function cfgApplyHours(projectId, result, cfg) {
     coolingId: cfg.coolingId,
     scopeId: cfg.scopeId,
     dcType: cfg.dcType || 'standard',
-    securityMode: cfg.securityMode || 'inhouse',
+    securityMode: cfg.securityMode || 'ppa_delivered',
     framework: cfg.framework,
     cfdEnabled: cfg.cfdEnabled,
   };
@@ -2910,6 +2995,89 @@ function cfgShowCompletionBanner(projectId) {
 }
 
 
+
+// ── Estimate stale warning banner ────────────────────────────
+function showEstimateStaleBanner(id) {
+  const existing = document.getElementById('est-stale-banner-'+id);
+  if(existing) return; // already showing
+  const ovPanel = document.getElementById('tp-ov');
+  if(!ovPanel) return;
+  const banner = document.createElement('div');
+  banner.id = 'est-stale-banner-'+id;
+  banner.style.cssText = 'margin:0 0 14px;padding:12px 16px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.35);border-radius:8px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px';
+  banner.innerHTML = `
+    <div>
+      <div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:3px">Fee estimate may be out of date</div>
+      <div style="font-size:11px;font-family:var(--fm);color:var(--text2);line-height:1.5">
+        Changes to IT load, cooling type, DC type or stages may affect estimated hours.<br/>
+        Re-run Quick Estimate to update the fee calculator with current project values.
+      </div>
+      <button onclick="openCfgModal('existing','${id}')" style="margin-top:8px;padding:4px 12px;font-size:11px;font-family:var(--fm);background:var(--amber);color:#1a1a1a;border:none;border-radius:5px;cursor:pointer;font-weight:600">
+        Re-run Quick Estimate →
+      </button>
+    </div>
+    <button onclick="this.closest('[id^=est-stale-banner]').remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;padding:0;flex-shrink:0;line-height:1">✕</button>`;
+  // Insert after completion banner or at top of overview
+  const compBanner = document.getElementById('cfg-completion-banner');
+  if(compBanner) compBanner.after(banner);
+  else ovPanel.insertBefore(banner, ovPanel.firstChild);
+}
+
+function hideEstimateStaleBanner(id) {
+  const b = document.getElementById('est-stale-banner-'+id);
+  if(b) b.remove();
+}
+
+function markEstimateStale(id) {
+  if(!id) return;
+  const ps = getPS(id);
+  if(!ps.feeExists) return; // only relevant if estimate was run
+  ps.estimateOutOfDate = true;
+  showEstimateStaleBanner(id);
+  saveProjectToSupabase(id);
+}
+
+// ── Required field border highlighting ───────────────────────
+// Called after generate and after saveChanges to highlight/clear incomplete fields
+const REQUIRED_FIELD_HIGHLIGHTS = ['ovref','ovclient','ovloc','ovtitle','ovcmail'];
+
+function applyFieldHighlights(projectId) {
+  const p = PROJECTS[projectId];
+  if(!p) return;
+  // Define which fields are "complete"
+  const fieldComplete = {
+    ovref:    hasRealPPACode(projectId),
+    ovclient: !!(p.client && p.client.trim()),
+    ovloc:    !!(p.loc && p.loc.trim()),
+    ovtitle:  !!(p.name && p.name.trim()),
+    ovcmail:  !!(p.cmail && p.cmail.trim()),
+  };
+  REQUIRED_FIELD_HIGHLIGHTS.forEach(fid => {
+    const el = document.getElementById(fid);
+    if(!el) return;
+    if(!fieldComplete[fid]) {
+      // Incomplete — amber/red left border
+      el.style.borderLeft = '3px solid #e8593c';
+      el.style.borderRadius = '0 4px 4px 0';
+      el.style.background = 'rgba(232,89,60,.04)';
+    } else {
+      // Complete — clear highlight
+      el.style.borderLeft = '';
+      el.style.borderRadius = '';
+      el.style.background = '';
+    }
+  });
+}
+
+function clearFieldHighlights() {
+  REQUIRED_FIELD_HIGHLIGHTS.forEach(fid => {
+    const el = document.getElementById(fid);
+    if(!el) return;
+    el.style.borderLeft = '';
+    el.style.borderRadius = '';
+    el.style.background = '';
+  });
+}
 
 // ══ REALTIME SYNC ═════════════════════════════════════════
 let _realtimeChannel = null;
@@ -3236,13 +3404,14 @@ function getPS(id){
     customDeliverables:[],   // [{id,disc,name,state,note}]
     roleQty:{},
     subConsultants:[],   // array of discipline names that are sub-consulted
-    securityMode:'inhouse',
+    securityMode:'ppa_delivered',
     subFees:{},   // discName -> {fee, model, markup}  model: markup|passthrough|provisional|direct // 'inhouse' | 'sub' | 'both'              // roleId -> number (default 1)
   };
   // Ensure critical fields always exist (handles PER_PROJ[id]={} case)
   const _ps = PER_PROJ[id];
   if(!_ps.selStages || typeof _ps.selStages.has !== 'function') _ps.selStages = new Set(['2','3','4']);
   if(!_ps.selRoles  || typeof _ps.selRoles.has  !== 'function') _ps.selRoles  = new Set();
+  if(_ps.estimateOutOfDate === undefined) _ps.estimateOutOfDate = false;
   if(!_ps.manCellsSet || typeof _ps.manCellsSet.has !== 'function') _ps.manCellsSet = new Set();
   if(!_ps.feeVals)     _ps.feeVals     = {};
   if(!_ps.feeWkVals)   _ps.feeWkVals   = {};
@@ -3394,7 +3563,7 @@ function initSampleData(){
       ps.startDate='2026-09-01';
       ps.reviewWks={cd:2,sd:2,dd:2};
       ps.subConsultants=['Architecture','Structural & Civil'];
-      ps.securityMode='inhouse';
+      ps.securityMode='ppa_delivered';
       ps.subFees={
         'Architecture':{stageFees:{cd:85000,sd:120000,dd:95000},model:'markup',markup:12},
         'Structural & Civil':{stageFees:{cd:45000,sd:65000,dd:80000},model:'markup',markup:12},
@@ -5853,6 +6022,11 @@ function loadProject(id,cardEl){
 
   // Populate overview — data persists from PROJECTS object
   setV('ovref',p.ref);setV('ovtitle',p.name);setV('ovloc',p.loc||'');
+  // Apply field highlights after fields are populated
+  setTimeout(()=>{
+    if(currentId) applyFieldHighlights(currentId);
+    if(currentId && getPS(currentId).estimateOutOfDate) showEstimateStaleBanner(currentId);
+  }, 100);
   // Auto-set bid manager to Lead Manager if blank
   // Bid Manager = the LM who owns the bid, not necessarily who is logged in
   if(!p.bmgr && p.lmgr) {
@@ -5939,7 +6113,13 @@ function getBadgeClass(s){
 }
 
 // ══ SAVE ══════════════════════════════════════════════════
-function mu(){unsaved=true;}
+function mu(){
+  // If estimate exists and key fields are being edited, mark stale
+  if(currentId && getPS(currentId).feeExists) {
+    const active = document.activeElement?.id || '';
+    const keyFields = ['ovmw','ovit','ovcool','ovdct','ovscope'];
+    if(keyFields.some(f => active.includes(f))) markEstimateStale(currentId);
+  }unsaved=true;}
 
 function updateFeeHint(){
   const hint=document.getElementById('ovefee-hint');if(!hint)return;
@@ -5956,6 +6136,7 @@ function updateFeeHint(){
 }
 
 function saveChanges(){
+  if(currentId) applyFieldHighlights(currentId);
   if(!currentId)return;
   const p=PROJECTS[currentId];
   // Update completion banner after save
@@ -6431,12 +6612,7 @@ function renderCoverPage(id){
     </div>
     <div class="sh"><span class="sdot" style="background:var(--${ps.stageFramework==='riba'?'amber':'purple'})"></span>${ps.stageFramework==='riba'?'RIBA stages in scope':'Design stages in scope'}</div>
     <div id="stage-grid-wrap-${id}"></div>
-    <div class="sh"><span class="sdot" style="background:var(--accent)"></span>Project timeline</div>
-    <div class="fg3">
-      <div class="f"><label>Start date</label><input type="date" id="startdate-${id}" value="${ps.startDate||'2026-06-01'}" oninput="onStartDate('${id}',this.value)"/></div>
-      <div class="f"><label>Total duration</label><div class="ro" id="totdur-${id}">—</div></div>
-      <div class="f"><label>Est. completion</label><div class="ro" id="estend-${id}">—</div></div>
-    </div>
+
     <div class="sh"><span class="sdot" style="background:var(--teal)"></span>Sub-consultants
       <span style="font-size:10px;font-family:var(--fm);color:var(--text3);font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px">Pre-selected from band — toggle to adjust</span>
     </div>
@@ -6579,10 +6755,10 @@ function renderScopePanel(id){
       if(dExcl)metaParts.push(`<span style="color:var(--coral)">${dExcl} excl</span>`);
       if(dTBC)metaParts.push(`<span style="color:var(--amber)">${dTBC} TBC</span>`);
 
-      const isSub=(ps.subConsultants||[]).includes(disc.disc)||(disc.disc==='Security / ICT'&&(ps.securityMode==='sub'||ps.securityMode==='both'));
-      const isSecBoth=disc.disc==='Security / ICT'&&ps.securityMode==='both';
+      const isSub=(ps.subConsultants||[]).includes(disc.disc)||(disc.disc==='Security / ICT'&&(ps.securityMode==='client_direct'||ps.securityMode==='split_scope'));
+      const isSecBoth=disc.disc==='Security / ICT'&&ps.securityMode==='split_scope';
       const subBadge=isSub?`<span style="font-size:9px;font-family:var(--fm);color:var(--purple);background:rgba(155,141,248,.15);padding:1px 6px;border-radius:3px;margin-left:4px">${isSecBoth?'In-house + Sub':'Sub'}</span>`:''
-        +(disc.disc==='Security / ICT'&&ps.securityMode==='inhouse'?`<span style="font-size:9px;font-family:var(--fm);color:var(--accent2);background:rgba(141,198,63,.1);padding:1px 6px;border-radius:3px;margin-left:4px">In-house</span>`:'');
+        +(disc.disc==='Security / ICT'&&ps.securityMode==='ppa_delivered'?`<span style="font-size:9px;font-family:var(--fm);color:var(--accent2);background:rgba(141,198,63,.1);padding:1px 6px;border-radius:3px;margin-left:4px">PPa-delivered</span>`:'');
 
       return `<div style="border-bottom:0.5px solid var(--border)">
         <div style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:var(--bg4);cursor:pointer;user-select:none"
@@ -6852,23 +7028,23 @@ const INHOUSE_DISCS=new Set(SUB_CONSULT_DISCS.filter(d=>d.inhouse).map(d=>d.name
 function renderSubConsultWrap(id){
   const ps=getPS(id);
   if(!ps.subConsultants)ps.subConsultants=[];
-  if(!ps.securityMode)ps.securityMode='inhouse';
+  if(!ps.securityMode)ps.securityMode='ppa_delivered';
   const subs=ps.subConsultants;
 
   const mkInhouseChip=(disc)=>`<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg3);margin:2px;opacity:.55;cursor:default">
     <div style="width:6px;height:6px;border-radius:50%;background:${disc.color};flex-shrink:0"></div>
     <span style="font-size:11px;font-family:var(--fb);color:var(--text3)">${disc.name}</span>
-    <span style="font-size:9px;font-family:var(--fm);color:var(--accent2);margin-left:2px">In-house</span>
+    <span style="font-size:9px;font-family:var(--fm);color:var(--accent2);margin-left:2px">PPa-delivered</span>
   </div>`;
 
   // Security chip — cycles: In-house → Sub-consultant → Both → In-house
-  const secMode=ps.securityMode||'inhouse';
-  const secColors={'inhouse':'var(--accent2)','sub':'#4da6ff','both':'var(--purple)'};
-  const secLabels={'inhouse':'In-house','sub':'Sub-consultant','both':'Both'};
-  const secBorder={'inhouse':'var(--border)','sub':'#4da6ff','both':'var(--purple)'};
-  const secBg={'inhouse':'var(--bg3)','sub':'color-mix(in srgb,#4da6ff 10%,transparent)','both':'color-mix(in srgb,var(--purple) 10%,transparent)'};
-  const secNextMode={'inhouse':'sub','sub':'both','both':'inhouse'};
-  const secChip=`<div onclick="cycleSecurityMode('${id}')" title="Click to cycle: In-house → Sub-consultant → Both"
+  const secMode=ps.securityMode||'ppa_delivered';
+  const secColors={'ppa_delivered':'var(--accent2)','client_direct':'#4da6ff','split_scope':'var(--purple)'};
+  const secLabels={'ppa_delivered':'PPa-delivered','client_direct':'Client-direct','split_scope':'Split scope'};
+  const secBorder={'ppa_delivered':'var(--border)','client_direct':'#4da6ff','split_scope':'var(--purple)'};
+  const secBg={'ppa_delivered':'var(--bg3)','client_direct':'color-mix(in srgb,#4da6ff 10%,transparent)','split_scope':'color-mix(in srgb,var(--purple) 10%,transparent)'};
+  const secNextMode={'ppa_delivered':'client_direct','client_direct':'split_scope','split_scope':'ppa_delivered'};
+  const secChip=`<div onclick="cycleSecurityMode('${id}')" title="PPa-delivered: hours in PPa fee (staff or contractors). Client-direct: client appoints own consultant. Split scope: PPa does strategy, client appoints implementer."
     style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:4px;cursor:pointer;margin:2px;transition:all .12s;
       border:1px solid ${secBorder[secMode]};background:${secBg[secMode]}">
     <div style="width:6px;height:6px;border-radius:50%;background:${secColors[secMode]};flex-shrink:0"></div>
@@ -6913,14 +7089,14 @@ function toggleSubConsult(id,discName){
 }
 function cycleSecurityMode(id){
   const ps=getPS(id);
-  const modes=['inhouse','sub','both'];
-  const cur=ps.securityMode||'inhouse';
+  const modes=['ppa_delivered','client_direct','split_scope'];
+  const cur=ps.securityMode||'ppa_delivered';
   ps.securityMode=modes[(modes.indexOf(cur)+1)%3];
   // Add/remove ICT+Security roles from selRoles based on new mode
   const _newMode = ps.securityMode;
-  if(_newMode === 'inhouse' || _newMode === 'both') {
+  if(_newMode === 'ppa_delivered' || _newMode === 'split_scope') {
     ['ict_lead','ict_assoc','sec_lead','sec_assoc'].forEach(rid => ps.selRoles.add(rid));
-  } else if(_newMode === 'sub') {
+  } else if(_newMode === 'client_direct') {
     ['ict_lead','ict_assoc','ict_prin','ict_sr','ict_eng',
      'sec_lead','sec_assoc','sec_prin','sec_sr','sec_eng'].forEach(rid => ps.selRoles.delete(rid));
   }
@@ -6931,8 +7107,8 @@ function cycleSecurityMode(id){
 function getActiveSubs(id){
   const ps=getPS(id);
   const subs=[...(ps.subConsultants||[])];
-  const sm=ps.securityMode||'inhouse';
-  if(sm==='sub'||sm==='both')subs.unshift('Security / ICT');
+  const sm=ps.securityMode||'ppa_delivered';
+  if(sm==='client_direct'||sm==='split_scope')subs.unshift('Security / ICT');
   return subs;
 }
 function getSubFee(ps,disc){
@@ -7136,9 +7312,9 @@ function renderRoleSelection(id){
 }
 function buildRoleGrid(id){
   const ps=getPS(id);const w=document.getElementById('rolewrap-'+id);if(!w)return;w.innerHTML='';
-  const secMode=ps.securityMode||'inhouse';
+  const secMode=ps.securityMode||'ppa_delivered';
   // Hide ICT and Security discipline groups when Security is sub-consultant only
-  const hideSecDiscs=secMode==='sub';
+  const hideSecDiscs=secMode==='client_direct';
   DISC.forEach(disc=>{
     if(hideSecDiscs&&(disc.k==='ict'||disc.k==='sec'))return;
     const col=document.createElement('div');
@@ -7280,8 +7456,8 @@ function rebuildFee(id){
   H+=`</tr></thead>`;
 
   let B=`<tbody>`;let grandHrs=0,grandFee=0;const stTot={};
-  const _secMode=ps.securityMode||'inhouse';
-  const _hideSecDiscs=_secMode==='sub'; // hide rows only when fully sub-consulted (not both/inhouse)
+  const _secMode=ps.securityMode||'ppa_delivered';
+  const _hideSecDiscs=_secMode==='client_direct'; // hide rows only when fully sub-consulted (not both/inhouse)
   DISC.forEach(disc=>{
     if(_hideSecDiscs&&(disc.k==='ict'||disc.k==='sec'))return;
     const dr=disc.r.filter(r=>ps.selRoles.has(r.id));if(!dr.length)return;
@@ -7442,6 +7618,8 @@ function onStot(id,rid,snum,totalVal,rate,wks){
   dist.forEach((v,i)=>ps.feeWkVals[rid][snum][i]=v);
   ps.manCellsSet.forEach(k=>{if(k.startsWith(rid+'-'+snum+'-'))ps.manCellsSet.delete(k);});
   recalcFee(id);
+  // Auto-save fee edits — prevents data loss on navigation without explicit save
+  _debouncedFeeSave(id);
 }
 function onCell(id,rid,snum,wi,val,rate,wks){
   const ps=getPS(id);const key=rid+'-'+snum+'-'+wi;ps.manCellsSet.add(key);
@@ -7482,6 +7660,32 @@ function recalcFee(id){
   syncGanttData(id);renderTabs(id);renderStagePanel(id);
   renderSubFeeTable(id);updateGrandTotal(id);
 }
+// Debounced auto-save specifically for fee cell edits
+// Prevents data loss when LM edits hours without clicking Save
+const _feeSaveTimers = {};
+function _debouncedFeeSave(id) {
+  if(_feeSaveTimers[id]) clearTimeout(_feeSaveTimers[id]);
+  // Show unsaved indicator on fee tab
+  const feeTab = document.querySelector('[data-tab="fee"]');
+  if(feeTab && !feeTab.dataset.unsaved) {
+    feeTab.dataset.unsaved = '1';
+    feeTab.style.position = 'relative';
+    if(!document.getElementById('fee-unsaved-dot-'+id)) {
+      const dot = document.createElement('span');
+      dot.id = 'fee-unsaved-dot-'+id;
+      dot.style.cssText = 'position:absolute;top:4px;right:4px;width:6px;height:6px;background:#f5a623;border-radius:50%;';
+      feeTab.appendChild(dot);
+    }
+  }
+  _feeSaveTimers[id] = setTimeout(()=>{
+    saveProjectToSupabase(id);
+    // Clear unsaved indicator
+    const dot = document.getElementById('fee-unsaved-dot-'+id);
+    if(dot) dot.remove();
+    if(feeTab) delete feeTab.dataset.unsaved;
+  }, 1500);
+}
+
 function removeRoleFromFee(id,rid){const ps=getPS(id);ps.selRoles.delete(rid);rebuildFee(id);renderTabs(id);toast('Role removed');}
 function addRoleToFee(id){
   const sel=document.getElementById('add-role-sel-'+id);if(!sel||!sel.value)return;
@@ -7511,6 +7715,12 @@ function syncGanttData(id){
 function renderProgramme(id){
   const ps=getPS(id);const el=document.getElementById('tp-prog-inner');if(!el)return;
   el.innerHTML=`<div class="tab-body">
+    <div class="sh"><span class="sdot" style="background:var(--accent)"></span>Project timeline</div>
+    <div class="fg3" style="margin-bottom:18px">
+      <div class="f"><label>Start date</label><input type="date" id="startdate-${id}" value="${ps.startDate||'2026-06-01'}" oninput="onStartDate('${id}',this.value)"/></div>
+      <div class="f"><label>Total duration</label><div class="ro" id="totdur-${id}">—</div></div>
+      <div class="f"><label>Est. completion</label><div class="ro" id="estend-${id}">—</div></div>
+    </div>
     <div class="sh"><span class="sdot" style="background:var(--blue)"></span>Programme</div>
     <div class="gantt-wrap"><div class="gantt-inner" id="gantt-inner-${id}"></div></div>
     <div class="sh" style="margin-top:14px"><span class="sdot" style="background:var(--amber)"></span>Milestones</div>
@@ -7526,7 +7736,7 @@ function renderProgramme(id){
       <button class="btn bg bsm" onclick="exportCSV('${id}')">Export CSV</button>
     </div>
   </div>`;
-  updateGantt(id);renderMsList(id);
+  updateGantt(id);renderMsList(id);updateDur(id);
 }
 function updateGantt(id){
   const ps=getPS(id);const inner=document.getElementById('gantt-inner-'+id);if(!inner)return;
@@ -7749,7 +7959,7 @@ function renderProposalSummary(id){
         <div class="ps-kv"><div class="ps-kv-l">IT load</div><div class="ps-kv-v">${p.it?p.it+' MW IT':'—'}</div></div>
         <div class="ps-kv"><div class="ps-kv-l">Bid type</div><div class="ps-kv-v">${p.btype||'—'}</div></div>
         <div class="ps-kv"><div class="ps-kv-l">Rate type</div><div class="ps-kv-v">${p.rtype||'—'}</div></div>
-        <div class="ps-kv"><div class="ps-kv-l">Sub-consultants</div><div class="ps-kv-v">${(()=>{const subs=[...(ps.subConsultants||[])];const sm=ps.securityMode||'inhouse';if(sm==='sub'||sm==='both')subs.unshift('Security / ICT'+(sm==='both'?' (In-house + Sub)':''));return subs.length?subs.join(', '):'PPa in-house only';})()}</div></div>
+        <div class="ps-kv"><div class="ps-kv-l">Sub-consultants</div><div class="ps-kv-v">${(()=>{const subs=[...(ps.subConsultants||[])];const sm=ps.securityMode||'ppa_delivered';if(sm==='client_direct'||sm==='split_scope')subs.unshift('Security / ICT'+(sm==='split_scope'?' (Split scope)':''));return subs.length?subs.join(', '):'PPa in-house only';})()}</div></div>
       </div>
       ${p.brief?`<div style="background:var(--bg3);border-radius:5px;padding:10px 12px;margin-top:8px;font-size:12px;color:var(--text2);line-height:1.6">${p.brief}</div>`:''}
     </div>
@@ -8389,7 +8599,7 @@ function exportPSSummaryPDF(id){
         <div class="kv"><div class="kv-l">IT load</div><div class="kv-v">${p.it?p.it+' MW IT':'—'}</div></div>
         <div class="kv"><div class="kv-l">Bid type</div><div class="kv-v">${p.btype||'—'}</div></div>
         <div class="kv"><div class="kv-l">Rate type</div><div class="kv-v">${p.rtype||'—'}</div></div>
-        <div class="kv"><div class="kv-l">Sub-consultants</div><div class="kv-v">${(()=>{const subs=[...(ps.subConsultants||[])];const sm=ps.securityMode||'inhouse';if(sm==='sub'||sm==='both')subs.unshift('Security / ICT'+(sm==='both'?' (In-house + Sub)':''));return subs.length?subs.join(', '):'PPa in-house only';})()}</div></div>
+        <div class="kv"><div class="kv-l">Sub-consultants</div><div class="kv-v">${(()=>{const subs=[...(ps.subConsultants||[])];const sm=ps.securityMode||'ppa_delivered';if(sm==='client_direct'||sm==='split_scope')subs.unshift('Security / ICT'+(sm==='split_scope'?' (Split scope)':''));return subs.length?subs.join(', '):'PPa in-house only';})()}</div></div>
       </div>
       ${p.brief?`<div class="brief">${p.brief}</div>`:''}
 
