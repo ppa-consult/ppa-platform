@@ -618,7 +618,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
 
 
 <!-- DC PROPOSAL CONFIGURATOR MODAL -->
-<div class="modal-ov" id="cfg-modal" style="display:none" onclick="if(event.target===this)closeCfgModal()">
+<div class="modal-ov" id="cfg-modal" style="display:none" onmousedown="if(event.target===this)this.dataset.closeOk='1'" onmouseup="if(event.target===this&&this.dataset.closeOk==='1')closeCfgModal();this.dataset.closeOk='';">
   <div id="cfg-box" style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:0;max-width:1000px;width:96%;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px var(--sh)">
 
     <!-- Header -->
@@ -1971,6 +1971,15 @@ const _cfgDefault = () => ({
   _preview:null,
 });
 let _cfg = _cfgDefault();
+// DC type display labels — short form to avoid confusion with Band labels
+const DC_TYPE_LABELS = {
+  standard:  'Standard DC',
+  ai_hpc:    'AI / HPC',
+  hyperscale:'Hyperscale',
+  colocation:'Colocation',
+  edge:      'Edge / Micro',
+  district:  'District Cooling',
+};
 
 // ── 5. OPEN / CLOSE ──────────────────────────────────────────
 
@@ -2319,14 +2328,17 @@ function cfgStep1(body, sub) {
         Object.entries(CFG_MATRIX.cooling).map(([k,v])=>[k,v.label]),
         _cfg.coolingId))}
     </div>
-    ${cfgField('DC project type', cfgSel('cfg-dctype',[
-      ['standard','Standard Enterprise'],
-      ['ai_hpc','AI / HPC (GPU-dense)'],
-      ['hyperscale','Hyperscale (OCP campus)'],
-      ['colocation','Colocation (shell & core)'],
-      ['edge','Edge / Micro (<5MW)'],
-      ['district','District Cooling (no on-site plant)'],
-    ],_cfg.dcType))}
+    ${cfgField('DC project type',
+      cfgSel('cfg-dctype',[
+        ['standard','Standard DC'],
+        ['ai_hpc','AI / HPC'],
+        ['hyperscale','Hyperscale'],
+        ['colocation','Colocation'],
+        ['edge','Edge / Micro'],
+        ['district','District Cooling'],
+      ],_cfg.dcType),
+      'Project category — independent of IT load band. An AI/HPC project can be any band depending on scale.'
+    )}
     ${cfgField('MEP scope', cfgSel('cfg-scope',[
       ['full_mep','Full MEP (Mechanical + Electrical)'],
       ['mech_only','Mechanical only'],
@@ -2561,7 +2573,7 @@ function cfgStep4(body, sub) {
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${cool.label}</span>
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${_cfg.scopeId==='full_mep'?'Full MEP':_cfg.scopeId==='mech_only'?'Mechanical only':'Electrical only'}</span>
         <span style="background:var(--bg4);color:var(--text2);padding:2px 8px;border-radius:8px">${_cfg.stages.length} stage${_cfg.stages.length!==1?'s':''}</span>
-        <span style="background:rgba(232,89,60,.15);color:#c04030;padding:2px 8px;border-radius:8px;font-weight:600">${({standard:'Standard Enterprise',ai_hpc:'AI / HPC',hyperscale:'Hyperscale',colocation:'Colocation',edge:'Edge / Micro',district:'District Cooling'})[_cfg.dcType||'standard']}</span>
+        <span style="background:rgba(232,89,60,.15);color:#c04030;padding:2px 8px;border-radius:8px;font-weight:600">Type: ${ ({standard:'Standard DC',ai_hpc:'AI / HPC',hyperscale:'Hyperscale',colocation:'Colocation',edge:'Edge / Micro',district:'District Cooling'})[_cfg.dcType||'standard'] }</span>
       </div>
     </div>
     <div style="overflow-x:auto;margin-bottom:4px">
@@ -3039,7 +3051,7 @@ function markEstimateStale(id) {
 
 // ── Required field border highlighting ───────────────────────
 // Called after generate and after saveChanges to highlight/clear incomplete fields
-const REQUIRED_FIELD_HIGHLIGHTS = ['ovref','ovclient','ovloc','ovtitle','ovcmail'];
+const REQUIRED_FIELD_HIGHLIGHTS = ['ovref','ovclient','ovloc','ovtitle','ovcmail','ovbtype','ovddl','ovrtype'];
 
 function applyFieldHighlights(projectId) {
   const p = PROJECTS[projectId];
@@ -3051,6 +3063,9 @@ function applyFieldHighlights(projectId) {
     ovloc:    !!(p.loc && p.loc.trim()),
     ovtitle:  !!(p.name && p.name.trim()),
     ovcmail:  !!(p.cmail && p.cmail.trim()),
+    ovbtype:  !!(p.btype && p.btype !== ''),
+    ovddl:    !!(p.ddl && p.ddl.trim()),
+    ovrtype:  !!(p.rtype && p.rtype !== ''),
   };
   REQUIRED_FIELD_HIGHLIGHTS.forEach(fid => {
     const el = document.getElementById(fid);
