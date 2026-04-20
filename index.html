@@ -6620,12 +6620,12 @@ function renderStagePanel(id){
     info.textContent=pipe.qualScore!=null?`Qualified · score ${pipe.qualScore}/5`:'Qualified';
     const allDone=allTabsComplete(id);
     if(allDone){
-      acts.innerHTML=`<span style="font-size:11px;font-family:var(--fm);color:var(--accent2)">✓ All tabs complete — advance from Proposal Summary tab</span><button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
-      msg.className='sp-msg sp-ok on';msg.textContent='Cover page, roles, fee, and programme are all complete. Open Proposal Summary to review and advance to Proposal.';
+      acts.innerHTML=`<button class="btn bp bsm" onclick="advanceToProposal('${id}')">Advance to Proposal →</button><button class="btn bg bsm" onclick="trySwitch(document.getElementById('tab-ps'),'tp-ps')">Review Proposal Summary</button><button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
+      msg.className='sp-msg sp-ok on';msg.textContent='All tabs complete — ready to advance. Review the Proposal Summary first or go straight to Proposal.';
     } else {
       const missing=missingTabsList(id);
-      acts.innerHTML=`<button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
-      msg.className='sp-msg sp-block on';msg.textContent='Complete all tabs before advancing to Proposal: '+missing+'.';
+      acts.innerHTML=`<button class="btn bp bsm" onclick="advanceToProposal('${id}')" style="opacity:.55" title="Recommended: complete all tabs first — but you can advance now if needed">Advance to Proposal →</button><button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
+      msg.className='sp-msg sp-block on';msg.textContent='Recommended: complete these tabs before advancing — '+missing+'.';
     }
 
   }else if(stage==='Proposal'){
