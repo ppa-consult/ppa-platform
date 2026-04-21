@@ -3140,14 +3140,14 @@ function cfgShowCompletionBanner(projectId) {
   if(!p) return;
   const ps = getPS(projectId);
   const pipe = getPipe(projectId);
-  // Only show at Opportunity stage (rank 3+) and only if fee estimate has been run
-  // At Contacted/New Lead, user is still gathering basic info — banner not relevant yet
-  if(!ps.feeExists) return;
+  // Show at Opportunity stage (rank 3+) regardless of whether fee estimate has run
   if(rank(pipe.stage) < 3) return;
   const gates = getTabGates(projectId);
 
-  // Derive missing items from gates — single source of truth
+  // Derive missing items — single source of truth
   const missing = [];
+
+  // Overview fields
   if(!hasRealPPACode(projectId))  missing.push({label:'Project reference — enter PPA code (e.g. PPA260798)', field:'ovref'});
   if(!p.client)                   missing.push({label:'Contact name', field:'ovclient'});
   if(!p.loc)                      missing.push({label:'Location', field:'ovloc'});
@@ -3155,34 +3155,52 @@ function cfgShowCompletionBanner(projectId) {
   if(!p.btype)                    missing.push({label:'Appointment type', field:'ovbtype'});
   if(!p.ddl)                      missing.push({label:'Bid deadline', field:'ovddl'});
   if(!p.rtype)                    missing.push({label:'Contract type', field:'ovrtype'});
+  if(!p.brief)                    missing.push({label:'Project brief', field:'ovbrief'});
+  if(!p.mw)                       missing.push({label:'MW load', field:'ovmw'});
+
+  // Tab completion — only if not yet done
+  if(!ps.cvVisited)               missing.push({label:'Cover page — not yet visited', field:null, tab:'tab-cv', tp:'tp-cv'});
+  if(!feeHasValues(projectId))    missing.push({label:'Fee calculator — run Quick Estimate or enter hours', field:null, tab:'tab-fee', tp:'tp-fee'});
+  if(!ps.progVisited)             missing.push({label:'Programme — not yet visited', field:null, tab:'tab-prog', tp:'tp-prog'});
+  if(ps.estimateOutOfDate)        missing.push({label:'Fee estimate is stale — re-run or review fee calculator', field:null, tab:'tab-fee', tp:'tp-fee'});
 
   const existing = document.getElementById('cfg-completion-banner');
   if(existing) existing.remove();
   if(!missing.length) return;
 
-  const allDone = gates.coverPage;
+  // Determine title based on context
+  const hasFee = ps.feeExists;
+  const bannerTitle = hasFee ? 'Fee estimate generated' : 'Action required before advancing';
+  const bannerSub   = hasFee
+    ? 'Complete the fields below, then work through each tab in order:<br/><span style="color:var(--text3)">Cover page → Fee calculator → Programme → Proposal Summary</span>'
+    : 'Complete all required fields and tabs before this project can advance to Proposal:';
+
   const banner = document.createElement('div');
   banner.id = 'cfg-completion-banner';
   banner.style.cssText = 'margin:0 0 16px;padding:14px 16px;background:rgba(141,198,63,.07);border:1px solid rgba(141,198,63,.25);border-radius:8px';
   banner.innerHTML = `
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
       <div>
-        <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">Fee estimate generated</div>
-        <div style="font-size:11px;font-family:var(--fm);color:var(--text2);line-height:1.5">
-          Complete the fields below, then work through each tab in order:<br/>
-          <span style="color:var(--text3)">Cover page → Fee calculator → Programme → Proposal Summary</span>
-        </div>
+        <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">${bannerTitle}</div>
+        <div style="font-size:11px;font-family:var(--fm);color:var(--text2);line-height:1.5">${bannerSub}</div>
       </div>
       <button onclick="document.getElementById('cfg-completion-banner').remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;padding:0 0 0 12px;line-height:1;flex-shrink:0">✕</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:5px" id="cfg-banner-items">
-      ${missing.map(m=>`
-        <div id="banner-item-${m.field}" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 8px;background:var(--bg3);border-radius:5px"
-          onclick="const el=document.getElementById('${m.field}');if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline='2px solid var(--amber)';el.style.boxShadow='0 0 0 3px rgba(239,159,39,.15)';setTimeout(()=>{el.style.outline='';el.style.boxShadow='';},2500);}">
+      ${missing.map(m=>{
+        // Field items scroll to and highlight the field
+        // Tab items switch to that tab
+        const action = m.field
+          ? `const el=document.getElementById('${m.field}');if(el){el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline='2px solid var(--amber)';el.style.boxShadow='0 0 0 3px rgba(239,159,39,.15)';setTimeout(()=>{el.style.outline='';el.style.boxShadow='';},2500);}`
+          : (m.tab ? `trySwitch(document.getElementById('${m.tab}'),'${m.tp}')` : '');
+        return `
+        <div id="banner-item-${m.field||m.tab}" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 8px;background:var(--bg3);border-radius:5px"
+          onclick="${action}">
           <span style="width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0;display:inline-block"></span>
           <span style="font-size:11px;font-family:var(--fm);color:var(--text2)">${m.label}</span>
-          <span style="font-size:10px;color:var(--text3);margin-left:auto">tap to fill</span>
-        </div>`).join('')}
+          <span style="font-size:10px;color:var(--text3);margin-left:auto">${m.field ? 'tap to fill' : 'open tab →'}</span>
+        </div>`;
+      }).join('')}
     </div>`;
 
   const ovPanel = document.getElementById('tp-ov');
@@ -6486,11 +6504,11 @@ function getTabGates(id) {
   const isProposalStage = ['Proposal','Negotiation','Live'].includes(pipe.stage);
   const isNegOrLive = ['Negotiation','Live'].includes(pipe.stage);
   return {
-    coverPage:    r >= 2 && hasCode && hasContact,
-    roleSelect:   r >= 2 && hasCode && ps.cvVisited && !ps.feeExists,
-    feeCalc:      r >= 2 && ps.feeExists,
-    programme:    r >= 2 && ps.feeExists,
-    proposal:     r >= 2 && allTabsComplete(id),
+    coverPage:    r >= 3 && hasCode && hasContact,   // Opportunity+ AND real PPA code AND contact info
+    roleSelect:   r >= 3 && hasCode && ps.cvVisited && !ps.feeExists,
+    feeCalc:      r >= 3 && ps.feeExists,            // Opportunity+ only
+    programme:    r >= 3 && ps.feeExists,            // Opportunity+ only
+    proposal:     r >= 3 && allTabsComplete(id),
     feeBtn:       r >= 3 && r < 4 && !isProposalStage && !feeHasValues(id),
     showSummary:  pipe.stage==='Proposal' && !_inEditMode,
     showNegEdit:  isNegOrLive,
@@ -6579,25 +6597,29 @@ function renderBidSection(id){
   const fields = document.getElementById('bid-fields');
   if(r>=2){if(notice)notice.style.display='none';if(fields)fields.style.display='block';}
   else{if(notice)notice.style.display='flex';if(fields)fields.style.display='none';}
-  // Reference field — editable when rank>=2 and no real code yet
+  // Reference field logic
+  // Below Opportunity (rank < 3): always readonly — placeholder ref only, no editing
+  // At Opportunity (rank 3) without real PPA code: editable with prompt
+  // At Opportunity with real code, or Proposal+: readonly (code confirmed)
   const refEl    = document.getElementById('ovref');
   const refLabel = document.getElementById('ovref-label');
   if(refEl){
     const hasCode = hasRealPPACode(id);
-    if(r>=3 && !hasCode){
-      // Opportunity+ and no real code yet — prompt for PPA code
+    if(r < 3){
+      // Below Opportunity — reference is system-generated, not editable
+      refEl.setAttribute('readonly','');
+      refEl.classList.add('ro');
+      if(refLabel) refLabel.textContent='Reference';
+    } else if(r >= 3 && !hasCode){
+      // Opportunity+ and no real code yet — prompt to enter PPA code
       refEl.removeAttribute('readonly');
       refEl.classList.remove('ro');
       if(refLabel) refLabel.innerHTML='Reference <span style="font-size:9px;color:var(--amber);font-family:var(--fm);font-weight:400">— enter PPA project code (e.g. PPA260798) to unlock Cover page</span>';
-    } else if(r>=2 && !hasCode){
-      // Contacted/Info Pending — just an editable ref field, no PPA pressure
-      refEl.removeAttribute('readonly');
-      refEl.classList.remove('ro');
-      if(refLabel) refLabel.textContent='Reference';
     } else {
+      // Real code confirmed — readonly, show as PPA Project Code
       refEl.setAttribute('readonly','');
       refEl.classList.add('ro');
-      if(refLabel) refLabel.textContent = hasCode ? 'PPA Project Code' : 'Reference';
+      if(refLabel) refLabel.textContent='PPA Project Code';
     }
     if(!_refHintBusy) updateRefHint();
   }
@@ -6612,11 +6634,11 @@ function renderBidSection(id){
       efeeEl.placeholder='Est. fee';
     }
   }
-  // Refresh completion banner — only at Opportunity+ and only if fee estimate was run
-  if(getPS(id).feeExists && rank(getPipe(id).stage)>=3){
+  // Refresh completion banner — show at Opportunity+ for all projects
+  if(rank(getPipe(id).stage) >= 3){
     cfgShowCompletionBanner(id);
   } else {
-    // Remove any stale banner if project dropped back below Opportunity
+    // Remove any stale banner below Opportunity
     const stale=document.getElementById('cfg-completion-banner');
     if(stale) stale.remove();
   }
@@ -6695,9 +6717,8 @@ function renderStagePanel(id){
       acts.innerHTML=`<button class="btn bp bsm" onclick="advanceToProposal('${id}')">Advance to Proposal →</button><button class="btn bg bsm" onclick="trySwitch(document.getElementById('tab-ps'),'tp-ps')">Review Proposal Summary</button><button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
       msg.className='sp-msg sp-ok on';msg.textContent='All tabs complete — ready to advance. Review the Proposal Summary first or go straight to Proposal.';
     } else {
-      const missing=missingTabsList(id);
       acts.innerHTML=`<button class="btn bp bsm" disabled style="opacity:.35;cursor:not-allowed" title="Complete all required sections first">Advance to Proposal →</button><button class="btn bd bsm" onclick="closeLead('${id}')">Close Lead</button>`;
-      msg.className='sp-msg sp-block on';msg.textContent='⛔ Cannot advance — complete the following first: '+missing+'.';
+      msg.className='sp-msg sp-block on';msg.textContent='⛔ Complete the checklist in the Overview tab before advancing to Proposal.';
     }
 
   }else if(stage==='Proposal'){
