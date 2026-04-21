@@ -3139,8 +3139,11 @@ function cfgShowCompletionBanner(projectId) {
   const p = PROJECTS[projectId];
   if(!p) return;
   const ps = getPS(projectId);
-  // Only show this banner if fee estimate has been run
+  const pipe = getPipe(projectId);
+  // Only show at Opportunity stage (rank 3+) and only if fee estimate has been run
+  // At Contacted/New Lead, user is still gathering basic info — banner not relevant yet
   if(!ps.feeExists) return;
+  if(rank(pipe.stage) < 3) return;
   const gates = getTabGates(projectId);
 
   // Derive missing items from gates — single source of truth
@@ -3239,6 +3242,18 @@ const REQUIRED_FIELD_HIGHLIGHTS = ['ovref','ovclient','ovloc','ovtitle','ovcmail
 function applyFieldHighlights(projectId) {
   const p = PROJECTS[projectId];
   if(!p) return;
+  const ps = getPS(projectId);
+  const pipe = getPipe(projectId);
+  // Only highlight incomplete fields at Opportunity stage and above
+  // At Contacted/New Lead the user is still gathering info — don't pressure them
+  if(!ps.feeExists || rank(pipe.stage) < 3) {
+    // Clear any existing highlights
+    REQUIRED_FIELD_HIGHLIGHTS.forEach(fid=>{
+      const el=document.getElementById(fid);
+      if(el){el.style.borderLeft='';el.style.boxShadow='';}
+    });
+    return;
+  }
   // Define which fields are "complete"
   const fieldComplete = {
     ovref:    hasRealPPACode(projectId),
@@ -6476,7 +6491,7 @@ function getTabGates(id) {
     feeCalc:      r >= 2 && ps.feeExists,
     programme:    r >= 2 && ps.feeExists,
     proposal:     r >= 2 && allTabsComplete(id),
-    feeBtn:       r >= 2 && r < 4 && !isProposalStage && !feeHasValues(id),
+    feeBtn:       r >= 3 && r < 4 && !isProposalStage && !feeHasValues(id),
     showSummary:  pipe.stage==='Proposal' && !_inEditMode,
     showNegEdit:  isNegOrLive,
   };
